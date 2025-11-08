@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         AWA Track Interceptor and Poller
-// @namespace    http://tampermonkey.net/
+// @namespace    https://www.kurisutaru.net/
 // @version      1.2
 // @author       Kurisutaru
 // @description  Optimized track request interceptor and poller
 // @match        https://www.twitch.tv/*
 // @match        https://ehc5ey5g9hoehi8ys54lr6eknomqgr.ext-twitch.tv/*
+// @updateURL    https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/alienwarearena.com/awa-track-interceptor-and-poller.user.js
 // @run-at       document-idle
 // @grant        unsafeWindow
 // @grant        GM_notification
