@@ -6,6 +6,7 @@
 // @description  Optimized track request interceptor and poller
 // @match        https://www.twitch.tv/*
 // @match        https://ehc5ey5g9hoehi8ys54lr6eknomqgr.ext-twitch.tv/*
+// @downloadURL    https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/alienwarearena.com/awa-track-interceptor-and-poller.user.js
 // @updateURL    https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/alienwarearena.com/awa-track-interceptor-and-poller.user.js
 // @run-at       document-idle
 // @grant        unsafeWindow

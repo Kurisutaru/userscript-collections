@@ -5,7 +5,8 @@
 // @description  Sync localStorage data for Trickcal with Kuri CP dropdown + Pantry.cloud online sync
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
-// @updateURL    https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/trickcal-kuri-cp-sync-manager.user.js
+// @downloadURL    https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/trickcal.nossite.com/trickcal-kuri-cp-sync-manager.user.js
+// @updateURL    https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/trickcal.nossite.com/trickcal-kuri-cp-sync-manager.user.js
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
