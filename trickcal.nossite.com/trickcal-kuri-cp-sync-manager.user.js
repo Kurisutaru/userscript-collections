@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trickcal Kuri CP Sync Manager
 // @namespace    https://www.kurisutaru.net/
-// @version      1.9
+// @version      1.10
 // @description  Sync localStorage data for Trickcal with Kuri CP dropdown + Pantry.cloud online sync
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
@@ -499,16 +499,36 @@ class Pantry {
         }
     }
 
-    function showNotification(msg, type) {
-        const n = document.createElement('div');
-        n.className = `kuri-notification kuri-notification-${type}`;
-        n.textContent = msg;
-        document.body.appendChild(n);
+    function showNotification(message, type = 'info', duration = 3000) {
+        // Create a container once
+        let container = document.querySelector('.kuri-notification-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'kuri-notification-container';
+            document.body.appendChild(container);
+        }
+
+        // Create the notification
+        const notif = document.createElement('div');
+        notif.className = `kuri-notification kuri-notification-${type}`;
+        notif.textContent = message;
+
+        // Append at the bottom of the stack
+        container.appendChild(notif);
+
+        // Force reflow to trigger CSS animation
+        void notif.offsetWidth;
+
+        // Auto remove after duration
         setTimeout(() => {
-            n.classList.add('kuri-notification-exit');
-            setTimeout(() => n.remove(), 300);
-        }, 3000);
+            notif.classList.add('kuri-notification-exit');
+            notif.addEventListener('animationend', () => {
+                notif.remove();
+            });
+        }, duration);
     }
+
+
 
     function createSyncDropdown() {
         const container = document.createElement('div');
@@ -1374,23 +1394,95 @@ class Pantry {
       font-size: 12px;
       color: var(--text-secondary);
     }
+    
+    /* --- Toast --- */
+    .toast-container {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.5rem;
+        z-index: 9999;
+    }
+    
+    .toast {
+        background: var(--card-bg, #333);
+        color: var(--text-color, #fff);
+        padding: 10px 16px;
+        border-radius: 6px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        opacity: 0;
+        transform: translateY(20px);
+        transition: transform 0.35s ease, opacity 0.35s ease;
+        pointer-events: auto;
+        min-width: 200px;
+        max-width: 300px;
+    }
+    
+    /* Appear */
+    .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    
+    /* Disappear */
+    .toast.hide {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    
+    /* Optional color variants */
+    .toast-info {
+        background: #2196f3;
+    }
+    .toast-success {
+        background: #4caf50;
+    }
+    .toast-warning {
+        background: #ff9800;
+    }
+    .toast-error {
+        background: #f44336;
+    }
 
     /* --- Notification --- */
-    .kuri-notification {
+    .kuri-notification-container {
       position: fixed;
       top: 20px;
       right: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      z-index: 10000;
+      pointer-events: none;
+    }
+    
+    /* Each notification smoothly shifts upward when others are removed */
+    .kuri-notification {
+      position: relative;
+      margin-top: 10px;
       padding: 12px 20px;
       border-radius: 6px;
       color: #fff;
       box-shadow: var(--shadow-md);
       z-index: 10000;
       font-size: 14px;
-      animation: slideIn .3s ease;
+      animation: slideIn 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+      pointer-events: auto;
+      transition: transform 0.35s ease, opacity 0.35s ease;
+      transform-origin: top right;
+      will-change: transform, opacity;
     }
-
+    
     .kuri-notification.kuri-notification-exit {
-      animation: slideOut .3s ease;
+      animation: slideOut 0.3s ease forwards;
+    }
+    
+    /* Slight spacing illusion — newer toast slides from below */
+    .kuri-notification-container .kuri-notification:not(:last-child) {
+      transform: translateY(0);
     }
 
     .kuri-notification-success {
