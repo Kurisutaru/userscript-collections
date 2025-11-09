@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trickcal Kuri CP Sync Manager
 // @namespace    https://www.kurisutaru.net/
-// @version      1.8
+// @version      1.9
 // @description  Sync localStorage data for Trickcal with Kuri CP dropdown + Pantry.cloud online sync
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
@@ -62,7 +62,7 @@ class KuriPopup {
         if (this.yesText) {
             const yesBtn = document.createElement('button');
             yesBtn.textContent = this.yesText;
-            yesBtn.className = 'kuri-btn kuri-popup-yes-btn';
+            yesBtn.className = 'kuri-btn-base kuri-popup-yes-btn';
             yesBtn.onclick = () => {
                 this.yesCallback?.();
                 this.remove();
@@ -73,7 +73,7 @@ class KuriPopup {
         if (this.noText) {
             const noBtn = document.createElement('button');
             noBtn.textContent = this.noText;
-            noBtn.className = 'kuri-btn kuri-popup-no-btn';
+            noBtn.className = 'kuri-btn-base kuri-popup-no-btn';
             noBtn.onclick = () => {
                 this.noCallback?.();
                 this.remove();
@@ -84,7 +84,7 @@ class KuriPopup {
         if (!this.yesText && !this.noText) {
             const okBtn = document.createElement('button');
             okBtn.textContent = 'OK';
-            okBtn.className = 'kuri-btn kuri-popup-ok-btn';
+            okBtn.className = 'kuri-btn-base kuri-popup-ok-btn';
             okBtn.onclick = () => this.remove();
             btnContainer.appendChild(okBtn);
         }
@@ -612,8 +612,8 @@ class Pantry {
         <input id="cfg-autosync" type="number" min="10" step="10" class="kuri-config-input" value="${interval}">
       </div>
       <div class="kuri-config-btn-group">
-        <button id="btn-sync-now" class="kuri-btn">🔄 Sync Now</button>
-        <button id="btn-force-resync" class="kuri-btn">🗑️ Force Resync</button>
+        <button id="btn-sync-now" class="kuri-btn-base kuri-btn-primary kuri-flex-1">🔄 Sync Now</button>
+        <button id="btn-force-resync" class="kuri-btn-base kuri-btn-secondary kuri-flex-1">🗑️ Force Resync</button>
       </div>
 
       <hr class="kuri-config-divider">
@@ -624,25 +624,25 @@ class Pantry {
         <label class="kuri-switch"><input type="checkbox" id="cfg-online-toggle" ${onlineEnabled ? 'checked' : ''}><span class="kuri-slider"></span></label>
       </div>
       <div class="kuri-config-input-group">
-        <label>Pantry ID <span id="pantry-info" class="kuri-config-info-btn">[?]</span></label>
+        <label>🍊Pantry ID <span id="pantry-info" class="kuri-config-info-btn">[?]</span></label>
         <input id="cfg-pantry-id" type="text" placeholder="Your Pantry ID" class="kuri-config-input" value="${pantryId}">
       </div>
       <div class="kuri-config-btn-group">
-        <button id="btn-online-sync" class="kuri-btn">🔄 Sync Now</button>
-        <button id="btn-online-pull" class="kuri-btn">🗑️ Force Resync</button>
+        <button id="btn-online-sync" class="kuri-btn-base kuri-btn-primary kuri-flex-1">🔄 Sync Now</button>
+        <button id="btn-online-pull" class="kuri-btn-base kuri-btn-secondary kuri-flex-1">🗑️ Force Resync</button>
       </div>
 
       <hr class="kuri-config-divider">
 
       <h3 class="kuri-config-section-title">💾 Backup Options</h3>
       <div class="kuri-config-btn-group">
-        <button id="btn-export" class="kuri-btn">📤 Export JSON</button>
-        <button id="btn-import" class="kuri-btn">📥 Import JSON</button>
+        <button id="btn-export" class="kuri-btn-base kuri-btn-success kuri-flex-1">📤 Export JSON</button>
+        <button id="btn-import" class="kuri-btn-base kuri-btn-warning kuri-flex-1">📥 Import JSON</button>
       </div>
 
       <div class="kuri-config-footer">
-        <button id="cfg-save" class="kuri-btn kuri-popup-yes-btn">Save</button>
-        <button id="cfg-close" class="kuri-btn kuri-popup-no-btn">Cancel</button>
+        <button id="cfg-save" class="kuri-btn-base kuri-popup-yes-btn">Save</button>
+        <button id="cfg-close" class="kuri-btn-base kuri-popup-no-btn">Cancel</button>
       </div>
     `;
 
@@ -752,46 +752,329 @@ class Pantry {
     /* ===================================
        ANIMATIONS
        =================================== */
-    @keyframes slideIn { 
-      from { transform: translateX(400px); opacity: 0; } 
-      to { transform: translateX(0); opacity: 1; } 
+    @keyframes slideIn {
+      from { transform: translateX(400px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
     }
-    
-    @keyframes slideOut { 
-      from { transform: translateX(0); opacity: 1; } 
-      to { transform: translateX(400px); opacity: 0; } 
+
+    @keyframes slideOut {
+      from { transform: translateX(0); opacity: 1; }
+      to { transform: translateX(400px); opacity: 0; }
     }
-    
-    @keyframes dropdownSlideIn { 
-      from { opacity: 0; transform: translateY(-10px); } 
-      to { opacity: 1; transform: translateY(0); } 
+
+    @keyframes dropdownSlideIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
-    
-    @keyframes fadeIn { 
-      from { opacity: 0; transform: scale(0.95); } 
-      to { opacity: 1; transform: scale(1); } 
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
     }
-    
+
     @keyframes scaleIn {
       from { opacity: 0; transform: scale(0.95); }
       to { opacity: 1; transform: scale(1); }
     }
-    
+
     @keyframes scaleOut {
       from { opacity: 1; transform: scale(1); }
       to { opacity: 0; transform: scale(0.95); }
     }
-    
+
     @keyframes fadeOut {
       from { opacity: 1; }
       to { opacity: 0; }
     }
 
     /* ===================================
-       BASE COMPONENTS (Foundation)
+       UTILITY CLASSES (Atomic Layer)
        =================================== */
-    
-    /* Button Base */
+
+    /* --- Spacing --- */
+    .kuri-p-xs { padding: 6px; }
+    .kuri-p-sm { padding: 8px; }
+    .kuri-p-md { padding: 12px; }
+    .kuri-p-lg { padding: 20px; }
+
+    .kuri-px-sm { padding-left: 8px; padding-right: 8px; }
+    .kuri-px-md { padding-left: 12px; padding-right: 12px; }
+    .kuri-px-lg { padding-left: 16px; padding-right: 16px; }
+
+    .kuri-py-sm { padding-top: 8px; padding-bottom: 8px; }
+    .kuri-py-md { padding-top: 12px; padding-bottom: 12px; }
+
+    .kuri-pt-md { padding-top: 12px; }
+    .kuri-pb-xs { padding-bottom: 4px; }
+
+    .kuri-m-0 { margin: 0; }
+    .kuri-mt-xs { margin-top: 4px; }
+    .kuri-mt-sm { margin-top: 8px; }
+    .kuri-mt-md { margin-top: 12px; }
+    .kuri-mt-lg { margin-top: 20px; }
+    .kuri-mb-sm { margin-bottom: 8px; }
+    .kuri-mb-md { margin-bottom: 12px; }
+    .kuri-mr-sm { margin-right: 8px; }
+    .kuri-mr-md { margin-right: 12px; }
+
+    .kuri-gap-xs { gap: 4px; }
+    .kuri-gap-sm { gap: 8px; }
+    .kuri-gap-md { gap: 12px; }
+    .kuri-gap-lg { gap: 20px; }
+
+    /* --- Layout --- */
+    .kuri-flex { display: flex; }
+    .kuri-inline-flex { display: inline-flex; }
+    .kuri-flex-col { flex-direction: column; }
+    .kuri-items-center { align-items: center; }
+    .kuri-items-start { align-items: flex-start; }
+    .kuri-justify-between { justify-content: space-between; }
+    .kuri-justify-center { justify-content: center; }
+    .kuri-justify-start { justify-content: flex-start; }
+    .kuri-flex-1 { flex: 1; }
+
+    .kuri-relative { position: relative; }
+    .kuri-absolute { position: absolute; }
+    .kuri-fixed { position: fixed; }
+
+    .kuri-inset-0 { top: 0; left: 0; right: 0; bottom: 0; }
+
+    .kuri-w-full { width: 100%; }
+    .kuri-w-auto { width: auto; }
+    .kuri-min-w-260 { min-width: 260px; }
+
+    .kuri-max-w-90vw { max-width: 90vw; }
+
+    /* --- Display --- */
+    .kuri-block { display: block; }
+    .kuri-inline-block { display: inline-block; }
+    .kuri-hidden { display: none; }
+
+    /* --- Borders & Radius --- */
+    .kuri-rounded-xs { border-radius: 4px; }
+    .kuri-rounded-sm { border-radius: 6px; }
+    .kuri-rounded-md { border-radius: 8px; }
+    .kuri-rounded-lg { border-radius: 12px; }
+    .kuri-rounded-full { border-radius: 50%; }
+    .kuri-rounded-pill { border-radius: 22px; }
+
+    .kuri-border { border: 2px solid var(--border-color); }
+    .kuri-border-1 { border: 1px solid var(--border-color); }
+    .kuri-border-none { border: none; }
+    .kuri-border-primary { border-color: var(--primary-color); }
+
+    .kuri-border-b { border-bottom: 1px solid var(--border-color); }
+    .kuri-border-t { border-top: 1px solid var(--border-color); }
+
+    /* --- Backgrounds --- */
+    .kuri-bg-transparent { background: transparent; }
+    .kuri-bg-card { background: var(--card-bg); }
+    .kuri-bg-panel { background: var(--panel-bg); }
+    .kuri-bg-overlay { background: var(--overlay-bg); }
+    .kuri-bg-hover { background: var(--hover-bg); }
+    .kuri-bg-button { background: var(--button-bg); }
+
+    .kuri-bg-primary { background: var(--primary-color); }
+    .kuri-bg-primary-soft { background: var(--primary-bg); }
+    .kuri-bg-primary-hover { background: var(--primary-hover); }
+
+    .kuri-bg-success { background: var(--success-color); }
+    .kuri-bg-success-soft { background: var(--success-bg); }
+
+    .kuri-bg-warning { background: var(--warning-color); }
+    .kuri-bg-warning-soft { background: var(--warning-bg); }
+
+    .kuri-bg-secondary { background: var(--secondary-bg); }
+
+    /* --- Text --- */
+    .kuri-text-primary { color: var(--text-primary); }
+    .kuri-text-secondary { color: var(--text-secondary); }
+    .kuri-text-tertiary { color: var(--text-tertiary); }
+    .kuri-text-white { color: white; }
+
+    .kuri-text-color-primary { color: var(--primary-color); }
+    .kuri-text-color-success { color: var(--success-color); }
+    .kuri-text-color-warning { color: var(--warning-text); }
+
+    .kuri-text-xs { font-size: 10px; }
+    .kuri-text-sm { font-size: 12px; }
+    .kuri-text-md { font-size: 14px; }
+    .kuri-text-base { font-size: 1rem; }
+    .kuri-text-lg { font-size: 1.1rem; }
+    .kuri-text-xl { font-size: 1.4rem; }
+
+    .kuri-font-normal { font-weight: normal; }
+    .kuri-font-medium { font-weight: 500; }
+    .kuri-font-semibold { font-weight: 600; }
+    .kuri-font-bold { font-weight: bold; }
+
+    .kuri-text-center { text-align: center; }
+    .kuri-text-left { text-align: left; }
+    .kuri-text-right { text-align: right; }
+
+    .kuri-uppercase { text-transform: uppercase; }
+    .kuri-letter-spacing-sm { letter-spacing: 0.5px; }
+
+    .kuri-line-height-normal { line-height: 1.5; }
+
+    /* --- Effects --- */
+    .kuri-shadow-sm { box-shadow: var(--shadow-sm); }
+    .kuri-shadow-md { box-shadow: var(--shadow-md); }
+    .kuri-shadow-lg { box-shadow: var(--shadow-lg); }
+
+    .kuri-backdrop-blur { backdrop-filter: blur(3px); }
+
+    .kuri-opacity-0 { opacity: 0; }
+
+    /* --- Transitions --- */
+    .kuri-transition-bg { transition: background-color 0.2s; }
+    .kuri-transition-colors { transition: background-color 0.3s, border-color 0.3s; }
+    .kuri-transition-all { transition: all 0.2s; }
+    .kuri-transition-transform { transition: transform 0.25s ease; }
+
+    /* --- Cursor --- */
+    .kuri-cursor-pointer { cursor: pointer; }
+
+    /* --- Z-index --- */
+    .kuri-z-9999 { z-index: 9999; }
+    .kuri-z-10000 { z-index: 10000; }
+    .kuri-z-10001 { z-index: 10001; }
+
+    /* --- Positioning --- */
+    .kuri-top-neg-4 { top: -4px; }
+    .kuri-right-neg-4 { right: -4px; }
+    .kuri-top-20 { top: 20px; }
+    .kuri-right-20 { right: 20px; }
+    .kuri-top-full-8 { top: calc(100% + 8px); }
+    .kuri-right-0 { right: 0; }
+
+    /* --- Sizing --- */
+    .kuri-size-10 { width: 10px; height: 10px; }
+    .kuri-size-16 { width: 16px; height: 16px; }
+    .kuri-w-42 { width: 42px; }
+    .kuri-h-22 { height: 22px; }
+    .kuri-w-380 { width: 380px; }
+    .kuri-w-420 { width: 420px; }
+
+    /* ===================================
+       BUTTON UTILITIES
+       =================================== */
+
+    /* Base button structure */
+    .kuri-btn-base {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: normal;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    /* Primary variants */
+    .kuri-btn-primary {
+      background: var(--primary-color);
+      color: var(--text-primary);
+    }
+
+    .kuri-btn-primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .kuri-btn-primary-soft {
+      background: var(--primary-bg);
+      color: var(--primary-color);
+    }
+
+    .kuri-btn-primary-soft:hover {
+      background: var(--primary-color);
+      color: var(--text-primary);
+    }
+
+    .kuri-btn-primary-outline {
+      background: transparent;
+      color: var(--primary-color);
+      border: 2px solid var(--primary-color);
+    }
+
+    .kuri-btn-primary-outline:hover {
+      background: var(--primary-bg);
+    }
+
+    /* Success variants */
+    .kuri-btn-success {
+      background: var(--success-color);
+      color: var(--text-primary);
+    }
+
+    .kuri-btn-success:hover {
+      background: color-mix(in srgb, var(--success-color) 85%, black);
+    }
+
+    .kuri-btn-success-soft {
+      background: var(--success-bg);
+      color: var(--success-color);
+    }
+
+    .kuri-btn-success-soft:hover {
+      background: var(--success-color);
+      color: var(--text-primary);
+    }
+
+    /* Warning variants */
+    .kuri-btn-warning {
+      background: var(--warning-color);
+      color: var(--text-primary);
+    }
+
+    .kuri-btn-warning:hover {
+      background: color-mix(in srgb, var(--warning-color) 80%, black);
+    }
+
+    .kuri-btn-warning-soft {
+      background: var(--warning-bg);
+      color: var(--warning-text);
+    }
+
+    .kuri-btn-warning-soft:hover {
+      background: color-mix(in srgb, var(--warning-bg) 80%, var(--warning-color));
+      color: var(--text-primary);
+    }
+
+    /* Secondary/Neutral variants */
+    .kuri-btn-secondary {
+      background: var(--button-bg);
+      color: var(--text-primary);
+    }
+
+    .kuri-btn-secondary:hover {
+      background: var(--button-hover);
+    }
+
+    .kuri-btn-ghost {
+      background: transparent;
+      color: var(--text-primary);
+    }
+
+    .kuri-btn-ghost:hover {
+      background: var(--hover-bg);
+    }
+
+    .kuri-btn-card {
+      background: var(--card-bg);
+      color: var(--text-primary);
+      border: 2px solid var(--border-color);
+    }
+
+    .kuri-btn-card:hover {
+      border-color: var(--primary-color);
+      background: var(--primary-bg);
+    }
+
+    /* ===================================
+       COMPONENT CLASSES
+       =================================== */
+
+    /* Legacy shorthand for compatibility */
     .kuri-btn {
       flex: 1;
       padding: 8px 12px;
@@ -807,7 +1090,7 @@ class Pantry {
       background: var(--primary-hover);
     }
 
-    /* Switch Toggle Base */
+    /* --- Switch Toggle --- */
     .kuri-switch {
       position: relative;
       display: inline-block;
@@ -853,11 +1136,7 @@ class Pantry {
       transform: translateX(20px);
     }
 
-    /* ===================================
-       SPECIFIC COMPONENTS (Override Base)
-       =================================== */
-
-    /* Popup Styles */
+    /* --- Popup Overlay & Panel --- */
     .kuri-popup-overlay {
       position: fixed;
       inset: 0;
@@ -918,8 +1197,9 @@ class Pantry {
       color: var(--primary-color);
       font-weight: 500;
     }
-    
+
     .kuri-popup-yes-btn:hover {
+      background: var(--primary-color);
       color: var(--text-primary);
     }
 
@@ -927,23 +1207,22 @@ class Pantry {
       background: var(--warning-bg);
       color: var(--warning-text);
     }
-    
+
     .kuri-popup-no-btn:hover {
+      background: color-mix(in srgb, var(--warning-bg) 80%, var(--warning-color));
       color: var(--text-primary);
-      background:  hsl(from var(--warning-bg) h s l / 0.8);
     }
 
     .kuri-popup-ok-btn {
       background: var(--success-color);
-      color: var(--success-bg);
-    }
-    
-    .kuri-popup-ok-btn:hover {
       color: var(--text-primary);
-      background: rgba(var(--success-color), 0.8);
     }
 
-    /* Container & Button */
+    .kuri-popup-ok-btn:hover {
+      background: color-mix(in srgb, var(--success-color) 85%, black);
+    }
+
+    /* --- CP Container & Button --- */
     .kuri-cp-container {
       position: relative;
       margin-right: 12px;
@@ -993,7 +1272,7 @@ class Pantry {
       transform: rotate(180deg);
     }
 
-    /* Status Indicator */
+    /* --- Status Indicator --- */
     .kuri-status-indicator {
       position: absolute;
       top: -4px;
@@ -1020,7 +1299,7 @@ class Pantry {
       background: #f44336;
     }
 
-    /* Dropdown Menu */
+    /* --- Dropdown Menu --- */
     .kuri-dropdown-menu {
       position: absolute;
       top: calc(100% + 8px);
@@ -1096,7 +1375,7 @@ class Pantry {
       color: var(--text-secondary);
     }
 
-    /* Notification */
+    /* --- Notification --- */
     .kuri-notification {
       position: fixed;
       top: 20px;
@@ -1130,7 +1409,7 @@ class Pantry {
       background: #2196f3;
     }
 
-    /* Config Overlay */
+    /* --- Config Overlay --- */
     .kuri-config-overlay {
       position: fixed;
       inset: 0;
@@ -1209,16 +1488,6 @@ class Pantry {
     .kuri-config-footer {
       text-align: right;
       margin-top: 20px;
-    }
-
-    /* Config Button Variants */
-    .kuri-btn-save {
-      background: var(--primary-color);
-      color: #fff;
-    }
-
-    .kuri-btn-cancel {
-      background: var(--hover-bg);
     }
   `;
     document.head.appendChild(style);
