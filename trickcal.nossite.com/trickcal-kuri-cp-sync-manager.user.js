@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trickcal Kuri CP Sync Manager
 // @namespace    https://www.kurisutaru.net/
-// @version      1.11
+// @version      1.12
 // @description  Sync localStorage data for Trickcal with Kuri CP dropdown + Pantry.cloud online sync
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
@@ -1622,6 +1622,29 @@ class Pantry {
   `;
     document.head.appendChild(style);
 
+    // Cache for board data from data.json
+    let boardDataCache = null;
+
+    // Fetch board data manually
+    async function fetchBoardData() {
+        if (boardDataCache) {
+            console.log('✅ Board data already cached');
+            return boardDataCache;
+        }
+
+        try {
+            const response = await fetch('/board/data.json');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            boardDataCache = await response.json();
+            return boardDataCache;
+        } catch (err) {
+            console.error('Failed to fetch board data:', err);
+            return null;
+        }
+    }
+
     //Calculate the board status
     const DEFAULT_LAYER_MULTIPLIERS = {
         layer1: {
@@ -1647,6 +1670,41 @@ class Pantry {
         }
     };
 
+    function getTotalCellsFromBoardData(layerNumber) {
+        if (!boardDataCache || !boardDataCache.characterBoards) {
+            return {
+                attack: '?',
+                crit: '?',
+                hp: '?',
+                defense: '?',
+                critResist: '?'
+            };
+        }
+
+        const layerKey = `layer${layerNumber}`;
+        const totals = {
+            attack: 0,
+            crit: 0,
+            hp: 0,
+            defense: 0,
+            critResist: 0
+        };
+
+        // Count cells for each character
+        Object.values(boardDataCache.characterBoards).forEach(character => {
+            const layer = character[layerKey];
+            if (layer && Array.isArray(layer)) {
+                layer.forEach(cellType => {
+                    if (totals.hasOwnProperty(cellType)) {
+                        totals[cellType]++;
+                    }
+                });
+            }
+        });
+
+        return totals;
+    }
+
     // Initialize multipliers if not set
     function initLayerMultipliers() {
         const saved = GM_getValue('layer_multipliers', null);
@@ -1671,11 +1729,11 @@ class Pantry {
         const boardProgressRaw = localStorage.getItem('trickcal_board_progress');
         if (!boardProgressRaw) {
             return {
-                attack: 0,
-                crit: 0,
-                hp: 0,
-                defense: 0,
-                critResist: 0
+                attack: { count: 0, total: '?' },
+                crit: { count: 0, total: '?' },
+                hp: { count: 0, total: '?' },
+                defense: { count: 0, total: '?' },
+                critResist: { count: 0, total: '?' }
             };
         }
 
@@ -1685,11 +1743,11 @@ class Pantry {
         } catch (e) {
             console.error('Failed to parse trickcal_board_progress:', e);
             return {
-                attack: 0,
-                crit: 0,
-                hp: 0,
-                defense: 0,
-                critResist: 0
+                attack: { count: 0, total: '?' },
+                crit: { count: 0, total: '?' },
+                hp: { count: 0, total: '?' },
+                defense: { count: 0, total: '?' },
+                critResist: { count: 0, total: '?' }
             };
         }
 
@@ -1724,13 +1782,36 @@ class Pantry {
             }
         });
 
-        // Calculate final percentages
+        // Get total available cells from board data
+        const totals = getTotalCellsFromBoardData(layerNumber);
+
+        // Calculate final percentages and include counts
         return {
-            attack: Math.floor(stats.attack * layerMultiplier.attack),
-            crit: Math.floor(stats.crit * layerMultiplier.crit),
-            hp: Math.floor(stats.hp * layerMultiplier.hp),
-            defense: Math.floor(stats.defense * layerMultiplier.defense),
-            critResist: Math.floor(stats.critResist * layerMultiplier.critResist)
+            attack: {
+                percentage: Math.floor(stats.attack * layerMultiplier.attack),
+                count: stats.attack,
+                total: totals.attack
+            },
+            crit: {
+                percentage: Math.floor(stats.crit * layerMultiplier.crit),
+                count: stats.crit,
+                total: totals.crit
+            },
+            hp: {
+                percentage: Math.floor(stats.hp * layerMultiplier.hp),
+                count: stats.hp,
+                total: totals.hp
+            },
+            defense: {
+                percentage: Math.floor(stats.defense * layerMultiplier.defense),
+                count: stats.defense,
+                total: totals.defense
+            },
+            critResist: {
+                percentage: Math.floor(stats.critResist * layerMultiplier.critResist),
+                count: stats.critResist,
+                total: totals.critResist
+            }
         };
     }
 
@@ -1742,23 +1823,23 @@ class Pantry {
                 <h3 class="kuri-summary-title">Layer Bonus Stats</h3>
                 <div class="kuri-stat-item">
                     <span class="kuri-stat-label">Attack</span>
-                    <span class="kuri-stat-value">+${stats.attack}%</span>
+                    <span class="kuri-stat-value">+${stats.attack.percentage}% [${stats.attack.count}/${stats.attack.total}]</span>
                 </div>
                 <div class="kuri-stat-item">
                     <span class="kuri-stat-label">Critical</span>
-                    <span class="kuri-stat-value">+${stats.crit}%</span>
+                    <span class="kuri-stat-value">+${stats.crit.percentage}% [${stats.crit.count}/${stats.crit.total}]</span>
                 </div>
                 <div class="kuri-stat-item">
                     <span class="kuri-stat-label">HP</span>
-                    <span class="kuri-stat-value">+${stats.hp}%</span>
+                    <span class="kuri-stat-value">+${stats.hp.percentage}% [${stats.hp.count}/${stats.hp.total}]</span>
+                </div>
+                <div class="kuri-stat-item">
+                    <span class="kuri-stat-label">Crit Resist</span>
+                    <span class="kuri-stat-value">+${stats.critResist.percentage}% [${stats.critResist.count}/${stats.critResist.total}]</span>
                 </div>
                 <div class="kuri-stat-item">
                     <span class="kuri-stat-label">Defense</span>
-                    <span class="kuri-stat-value">+${stats.defense}%</span>
-                </div>
-                <div class="kuri-stat-item">
-                    <span class="kuri-stat-label">Critical Resist</span>
-                    <span class="kuri-stat-value">+${stats.critResist}%</span>
+                    <span class="kuri-stat-value">+${stats.defense.percentage}% [${stats.defense.count}/${stats.defense.total}]</span>
                 </div>
             </div>
         </div>
@@ -1803,19 +1884,22 @@ class Pantry {
         // Initialize multipliers
         initLayerMultipliers();
 
-        // Display stats for current active layer
-        const currentLayer = getCurrentActiveLayer();
-        updateLayerStatsDisplay(currentLayer);
+        // Fetch board data first
+        fetchBoardData().then(() => {
+            // Display stats for current active layer
+            const currentLayer = getCurrentActiveLayer();
+            updateLayerStatsDisplay(currentLayer);
 
-        // Add click handlers to layer tabs
-        const tabButtons = layerPanel.querySelectorAll('.tab-btn');
-        tabButtons.forEach((btn, index) => {
-            btn.addEventListener('click', () => {
-                // Wait a bit for the tab to become active
-                setTimeout(() => {
-                    const layerNum = index + 1;
-                    updateLayerStatsDisplay(layerNum);
-                }, 100);
+            // Add click handlers to layer tabs
+            const tabButtons = layerPanel.querySelectorAll('.tab-btn');
+            tabButtons.forEach((btn, index) => {
+                btn.addEventListener('click', () => {
+                    // Wait a bit for the tab to become active
+                    setTimeout(() => {
+                        const layerNum = index + 1;
+                        updateLayerStatsDisplay(layerNum);
+                    }, 100);
+                });
             });
         });
 
