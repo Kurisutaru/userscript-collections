@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trickcal Kuri CP Sync Manager
 // @namespace    https://www.kurisutaru.net/
-// @version      1.10
+// @version      1.11
 // @description  Sync localStorage data for Trickcal with Kuri CP dropdown + Pantry.cloud online sync
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
@@ -272,13 +272,13 @@ class Pantry {
     }
 
     function setLastSyncDate(date) {
-        if(date == null) {
+        if (date == null) {
             date = new Date();
         }
 
         GM_setValue('last_sync_date', date.toISOString());
 
-        if(document.querySelector('#kuri-last-sync-date')) {
+        if (document.querySelector('#kuri-last-sync-date')) {
             document.querySelector('#kuri-last-sync-date').innerHTML = formatDateTime(date);
         }
     }
@@ -529,7 +529,6 @@ class Pantry {
     }
 
 
-
     function createSyncDropdown() {
         const container = document.createElement('div');
         container.className = 'kuri-cp-container';
@@ -680,7 +679,9 @@ class Pantry {
             </a>.
             `,
                 yesText: 'getPantry.cloud',
-                yesCallback: () => { window.open("https://getpantry.cloud", "_blank"); },
+                yesCallback: () => {
+                    window.open("https://getpantry.cloud", "_blank");
+                },
                 noText: 'Ok',
             });
         });
@@ -700,7 +701,9 @@ class Pantry {
                 This will clear and pull from local sync. Continue?
             `,
                 yesText: 'Yes',
-                yesCallback: () => { clearAndPullLocal(statusIndicator); },
+                yesCallback: () => {
+                    clearAndPullLocal(statusIndicator);
+                },
                 noText: 'Cancel',
             });
         };
@@ -724,7 +727,9 @@ class Pantry {
                 This will pull from Pantry and overwrite local data. Continue?
             `,
                 yesText: 'Yes',
-                yesCallback: () => { forceResyncOnline(statusIndicator); },
+                yesCallback: () => {
+                    forceResyncOnline(statusIndicator);
+                },
                 noText: 'Cancel',
             });
         };
@@ -1581,8 +1586,275 @@ class Pantry {
       text-align: right;
       margin-top: 20px;
     }
+    
+    /* --- Added for Calculate Counter --- */
+    .kuri-layer-stats {
+        background: var(--panel-bg);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    .kuri-summary-title {
+        margin: 0 0 1.5rem;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .kuri-stat-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: .75rem 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .kuri-stat-label {
+        font-size: .875rem;
+        color: var(--text-secondary);
+    }
+
+    .kuri-stat-value {
+        font-size: .875rem;
+        font-weight: 600;
+        color: var(--primary-color, #00d4ff);
+    }
   `;
     document.head.appendChild(style);
+
+    //Calculate the board status
+    const DEFAULT_LAYER_MULTIPLIERS = {
+        layer1: {
+            attack: 3,
+            crit: 3,
+            defense: 3,
+            critResist: 3,
+            hp: 3
+        },
+        layer2: {
+            attack: 4,
+            crit: 4,
+            defense: 4,
+            critResist: 4,
+            hp: 4
+        },
+        layer3: {
+            attack: 5,
+            crit: 5,
+            defense: 5,
+            critResist: 5,
+            hp: 5
+        }
+    };
+
+    // Initialize multipliers if not set
+    function initLayerMultipliers() {
+        const saved = GM_getValue('layer_multipliers', null);
+        if (!saved) {
+            GM_setValue('layer_multipliers', JSON.stringify(DEFAULT_LAYER_MULTIPLIERS));
+        }
+    }
+
+    // Get layer multipliers
+    function getLayerMultipliers() {
+        const saved = GM_getValue('layer_multipliers', null);
+        return saved ? JSON.parse(saved) : DEFAULT_LAYER_MULTIPLIERS;
+    }
+
+    // Set layer multipliers
+    function setLayerMultipliers(multipliers) {
+        GM_setValue('layer_multipliers', JSON.stringify(multipliers));
+    }
+
+    // Calculate layer stats from localStorage
+    function calculateLayerStats(layerNumber) {
+        const boardProgressRaw = localStorage.getItem('trickcal_board_progress');
+        if (!boardProgressRaw) {
+            return {
+                attack: 0,
+                crit: 0,
+                hp: 0,
+                defense: 0,
+                critResist: 0
+            };
+        }
+
+        let boardProgress;
+        try {
+            boardProgress = JSON.parse(boardProgressRaw);
+        } catch (e) {
+            console.error('Failed to parse trickcal_board_progress:', e);
+            return {
+                attack: 0,
+                crit: 0,
+                hp: 0,
+                defense: 0,
+                critResist: 0
+            };
+        }
+
+        const activatedCells = boardProgress.activatedCells || {};
+        const multipliers = getLayerMultipliers();
+        const layerKey = `layer${layerNumber}`;
+        const layerMultiplier = multipliers[layerKey] || DEFAULT_LAYER_MULTIPLIERS[layerKey];
+
+        // Count activated cells by status type
+        const stats = {
+            attack: 0,
+            crit: 0,
+            hp: 0,
+            defense: 0,
+            critResist: 0
+        };
+
+        Object.keys(activatedCells).forEach(key => {
+            if (activatedCells[key] === true) {
+                // Parse key format: {character}_layer{N}_{statusType}
+                const parts = key.split('_');
+                if (parts.length >= 3) {
+                    const keyLayer = parts[parts.length - 2]; // e.g., "layer1"
+                    const statusType = parts[parts.length - 1]; // e.g., "attack", "crit", etc.
+
+                    if (keyLayer === layerKey) {
+                        if (stats.hasOwnProperty(statusType)) {
+                            stats[statusType]++;
+                        }
+                    }
+                }
+            }
+        });
+
+        // Calculate final percentages
+        return {
+            attack: Math.floor(stats.attack * layerMultiplier.attack),
+            crit: Math.floor(stats.crit * layerMultiplier.crit),
+            hp: Math.floor(stats.hp * layerMultiplier.hp),
+            defense: Math.floor(stats.defense * layerMultiplier.defense),
+            critResist: Math.floor(stats.critResist * layerMultiplier.critResist)
+        };
+    }
+
+    // Create stats display HTML
+    function createLayerStatsDisplay(stats) {
+        return `
+        <div class="panel-card kuri-layer-stats">
+            <div class="layer-summary">
+                <h3 class="kuri-summary-title">Layer Bonus Stats</h3>
+                <div class="kuri-stat-item">
+                    <span class="kuri-stat-label">Attack</span>
+                    <span class="kuri-stat-value">+${stats.attack}%</span>
+                </div>
+                <div class="kuri-stat-item">
+                    <span class="kuri-stat-label">Critical</span>
+                    <span class="kuri-stat-value">+${stats.crit}%</span>
+                </div>
+                <div class="kuri-stat-item">
+                    <span class="kuri-stat-label">HP</span>
+                    <span class="kuri-stat-value">+${stats.hp}%</span>
+                </div>
+                <div class="kuri-stat-item">
+                    <span class="kuri-stat-label">Defense</span>
+                    <span class="kuri-stat-value">+${stats.defense}%</span>
+                </div>
+                <div class="kuri-stat-item">
+                    <span class="kuri-stat-label">Critical Resist</span>
+                    <span class="kuri-stat-value">+${stats.critResist}%</span>
+                </div>
+            </div>
+        </div>
+    `;
+    }
+
+    // Update or create layer stats display
+    function updateLayerStatsDisplay(layerNumber) {
+        const stats = calculateLayerStats(layerNumber);
+        const existingStats = document.querySelector('.kuri-layer-stats');
+        const statsHTML = createLayerStatsDisplay(stats);
+
+        if (existingStats) {
+            existingStats.outerHTML = statsHTML;
+        } else {
+            // Find the first panel-card and insert after it
+            const firstPanelCard = document.querySelector('.layer-panel .panel-card');
+            if (firstPanelCard) {
+                firstPanelCard.insertAdjacentHTML('afterend', statsHTML);
+            }
+        }
+    }
+
+    // Get current active layer number
+    function getCurrentActiveLayer() {
+        const activeTab = document.querySelector('.layer-panel .tab-btn.active');
+        if (activeTab) {
+            const text = activeTab.textContent.trim();
+            const match = text.match(/Layer (\d+)/i);
+            if (match) {
+                return parseInt(match[1], 10);
+            }
+        }
+        return 1; // Default to layer 1
+    }
+
+    // Initialize layer stats display
+    function initLayerStatsDisplay() {
+        const layerPanel = document.querySelector('.layer-panel');
+        if (!layerPanel) return false;
+
+        // Initialize multipliers
+        initLayerMultipliers();
+
+        // Display stats for current active layer
+        const currentLayer = getCurrentActiveLayer();
+        updateLayerStatsDisplay(currentLayer);
+
+        // Add click handlers to layer tabs
+        const tabButtons = layerPanel.querySelectorAll('.tab-btn');
+        tabButtons.forEach((btn, index) => {
+            btn.addEventListener('click', () => {
+                // Wait a bit for the tab to become active
+                setTimeout(() => {
+                    const layerNum = index + 1;
+                    updateLayerStatsDisplay(layerNum);
+                }, 100);
+            });
+        });
+
+        return true;
+    }
+
+    // Watch for character card clicks and recalculate stats
+    function watchLocalStorageChanges() {
+        // Store original setItem
+        const originalSetItem = localStorage.setItem;
+
+        // Override setItem
+        localStorage.setItem = function(key, value) {
+            // Call original
+            originalSetItem.apply(this, arguments);
+
+            // If trickcal_board_progress changed, recalculate
+            if (key === 'trickcal_board_progress') {
+                //console.log('📦 localStorage updated, recalculating stats...');
+                setTimeout(() => {
+                    const currentLayer = getCurrentActiveLayer();
+                    updateLayerStatsDisplay(currentLayer);
+                    //console.log('🔄 Stats recalculated');
+                }, 100);
+            }
+        };
+    }
+
+    // Check and inject layer stats display
+    function checkAndInjectLayerStats() {
+        const layerPanel = document.querySelector('.layer-panel');
+        if (layerPanel && !layerPanel.hasAttribute('data-kuri-stats-injected')) {
+            layerPanel.setAttribute('data-kuri-stats-injected', 'true');
+            if (initLayerStatsDisplay()) {
+                //console.log('✅ Layer stats display injected!');
+                watchLocalStorageChanges();
+            }
+        }
+    }
 
     function removeGoogleSignInText() {
         try {
@@ -1686,6 +1958,7 @@ class Pantry {
 
     function init() {
         injectDropdown();
+        initLayerMultipliers();
         watchThemeChanges();
         removeGoogleSignInText();
         removeTotalUsageText();
@@ -1697,6 +1970,7 @@ class Pantry {
                     checkAndReinject();
                     checkAndModifyGoogleButton();
                     checkAndModifyTotalUsageText();
+                    checkAndInjectLayerStats();
                     observer.throttled = false;
                 });
             }
@@ -1710,6 +1984,7 @@ class Pantry {
             checkAndReinject();
             checkAndModifyGoogleButton();
             checkAndModifyTotalUsageText();
+            checkAndInjectLayerStats();
         }, 2000);
     }
 
