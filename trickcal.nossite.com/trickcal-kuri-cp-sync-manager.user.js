@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Trickcal Kuri CP Sync Manager
+// @name         Kuri CP : Nossite Trickcal Enhancer
 // @namespace    https://www.kurisutaru.net/
-// @version      1.12
-// @description  Sync localStorage data for Trickcal with Kuri CP dropdown + Pantry.cloud online sync
+// @version      1.13
+// @description  Enhances Trickcal with a custom control panel: local & Pantry.cloud sync (with auto-sync), JSON backup/restore, real-time layer bonus stats, and UI cleanup.
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
 // @downloadURL  https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/trickcal.nossite.com/trickcal-kuri-cp-sync-manager.user.js
@@ -13,765 +13,1275 @@
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
-/* -------------------------------------------------
-   KuriPopup - Reuseable Popup
-   ------------------------------------------------- */
-class KuriPopup {
-    constructor({
-                    title = 'Info',
-                    content = '',
-                    yesText = null,
-                    yesCallback = null,
-                    noText = null,
-                    noCallback = null,
-                    closeOnOverlay = true
-                } = {}) {
-        this.title = title;
-        this.content = content;
-        this.yesText = yesText;
-        this.yesCallback = yesCallback;
-        this.noText = noText;
-        this.noCallback = noCallback;
-        this.closeOnOverlay = closeOnOverlay;
-
-        this.overlay = null;
-        this.panel = null;
-        this.create();
-    }
-
-    create() {
-        this.remove();
-
-        this.overlay = document.createElement('div');
-        this.overlay.className = 'kuri-popup-overlay';
-
-        this.panel = document.createElement('div');
-        this.panel.className = 'kuri-popup-panel';
-
-        const titleEl = document.createElement('h3');
-        titleEl.textContent = this.title;
-        titleEl.className = 'kuri-popup-title';
-
-        const contentEl = document.createElement('div');
-        contentEl.innerHTML = this.content;
-        contentEl.className = 'kuri-popup-content';
-
-        const btnContainer = document.createElement('div');
-        btnContainer.className = 'kuri-popup-btn-container';
-
-        if (this.yesText) {
-            const yesBtn = document.createElement('button');
-            yesBtn.textContent = this.yesText;
-            yesBtn.className = 'kuri-btn-base kuri-popup-yes-btn';
-            yesBtn.onclick = () => {
-                this.yesCallback?.();
-                this.remove();
-            };
-            btnContainer.appendChild(yesBtn);
-        }
-
-        if (this.noText) {
-            const noBtn = document.createElement('button');
-            noBtn.textContent = this.noText;
-            noBtn.className = 'kuri-btn-base kuri-popup-no-btn';
-            noBtn.onclick = () => {
-                this.noCallback?.();
-                this.remove();
-            };
-            btnContainer.appendChild(noBtn);
-        }
-
-        if (!this.yesText && !this.noText) {
-            const okBtn = document.createElement('button');
-            okBtn.textContent = 'OK';
-            okBtn.className = 'kuri-btn-base kuri-popup-ok-btn';
-            okBtn.onclick = () => this.remove();
-            btnContainer.appendChild(okBtn);
-        }
-
-        this.panel.appendChild(titleEl);
-        this.panel.appendChild(contentEl);
-        this.panel.appendChild(btnContainer);
-        this.overlay.appendChild(this.panel);
-        document.body.appendChild(this.overlay);
-
-        if (this.closeOnOverlay) {
-            this.overlay.addEventListener('click', (e) => {
-                if (e.target === this.overlay) this.remove();
-            });
-        }
-
-        const escHandler = (e) => {
-            if (e.key === 'Escape') {
-                this.remove();
-                document.removeEventListener('keydown', escHandler);
-            }
-        };
-        document.addEventListener('keydown', escHandler);
-    }
-
-    remove() {
-        if (this.overlay && this.overlay.parentNode) {
-            this.overlay.classList.add('kuri-popup-fade-out');
-            this.panel.classList.add('kuri-popup-scale-out');
-            setTimeout(() => {
-                this.overlay.remove();
-            }, 200);
-        }
-    }
-}
-
-/* -------------------------------------------------
-   PANTRY.CLOUD HELPER
-   ------------------------------------------------- */
-class Pantry {
-    constructor(pantryId) {
-        if (!pantryId) throw new Error('Pantry ID required');
-        this.base = `https://getpantry.cloud/apiv1/pantry/${pantryId}`;
-    }
-
-    _req(method, url, data = null) {
-        return new Promise((resolve, reject) => {
-            const opts = {
-                method,
-                url,
-                responseType: 'json',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                onload: r => (r.status >= 200 && r.status < 300) ? resolve(r.response) : reject(new Error(`${r.status} ${r.statusText}`)),
-                onerror: reject
-            };
-            if (data) opts.data = JSON.stringify(data);
-            if (typeof GM !== 'undefined' && GM.xmlHttpRequest) GM.xmlHttpRequest(opts);
-            else if (typeof GM_xmlhttpRequest !== 'undefined') GM_xmlhttpRequest(opts);
-            else reject(new Error('No HTTP client'));
-        });
-    }
-
-    details() {
-        return this._req('GET', this.base);
-    }
-
-    basket = {
-        get: name => this._req('GET', `${this.base}/basket/${name}`),
-        create: (name, data) => this._req('POST', `${this.base}/basket/${name}`, data),
-        update: (name, data) => this._req('PUT', `${this.base}/basket/${name}`, data),
-        delete: name => this._req('DELETE', `${this.base}/basket/${name}`)
-    };
-}
-
-/* -------------------------------------------------
-   MAIN SCRIPT
-   ------------------------------------------------- */
 (function () {
     'use strict';
 
-    const STORAGE_KEYS = [
-        'trickcal_board_progress',
-        'trickcal_language',
-        'trickcal_sweep_selected_materials',
-        'trickcal_theme',
-    ];
-    const BASKET_NAME = 'kurisutaru.trickcal.nossite';
-
-    let autoSyncInterval = null;
-    let lastSyncDate = null;
-    let isDropdownOpen = false;
-    let lastCheckedGoogleBtn = null;
-    let lastCheckedUsageDiv = null;
-    let currentDropdown = null;
-    let pantryClient = null;
-
-    let debugMode = false;
-
-    initPantryClient();
-
-    const MENU_ITEMS = [{
-        id: 'sync_now',
-        icon: '🔄',
-        name: 'Sync Now',
-        desc: 'Save current data to storage'
-    },
-        {
-            id: 'open_config',
-            icon: '⚙️',
-            name: 'Configuration',
-            desc: 'Open overlay to edit sync & backup settings'
+    /* ================================================
+       CONSTANTS & CONFIGURATION
+       ================================================ */
+    const CONFIG = {
+        STORAGE_KEYS: [
+            'trickcal_board_progress',
+            'trickcal_language',
+            'trickcal_sweep_selected_materials',
+            'trickcal_theme',
+        ],
+        BASKET_NAME: 'kurisutaru.trickcal.nossite',
+        AUTO_SYNC_DEFAULT_INTERVAL: 300,
+        MUTATION_CHECK_INTERVAL: 2000,
+        STATS_UPDATE_DELAY: 100,
+        NOTIFICATION_DURATION: 3000,
+        MIN_AUTO_SYNC_INTERVAL: 10,
+        STATUS_RESET_DELAY: 3000,
+        DEFAULT_LAYER_MULTIPLIERS: {
+            layer1: { attack: 3, crit: 3, defense: 3, critResist: 3, hp: 3 },
+            layer2: { attack: 4, crit: 4, defense: 4, critResist: 4, hp: 4 },
+            layer3: { attack: 5, crit: 5, defense: 5, critResist: 5, hp: 5 }
         },
-    ];
+        MENU_ITEMS: [
+            { id: 'sync_now', icon: '🔄', name: 'Sync Now', desc: 'Save current data to storage' },
+            { id: 'open_config', icon: '⚙️', name: 'Configuration', desc: 'Open overlay to edit sync & backup settings' }
+        ],
+        DEBUG_MODE: false
+    };
 
-    if (debugMode) {
-        setTimeout(async () => {
-            console.clear();
-            console.log('PANTRY DEBUG START');
+    /* ================================================
+       STATE MANAGEMENT
+       ================================================ */
+    const AppState = {
+        autoSyncInterval: null,
+        lastSyncDate: null,
+        isDropdownOpen: false,
+        lastCheckedGoogleBtn: null,
+        lastCheckedUsageDiv: null,
+        currentDropdown: null,
+        pantryClient: null,
+        boardDataCache: null,
+        cachedBoardProgress: null,
+        lastBoardProgressRaw: null,
+        domCache: {
+            navActions: null,
+            layerPanel: null,
+            googleBtn: null,
+            usageDiv: null
+        }
+    };
 
-            const pantryId = GM_getValue('pantry_id', '').trim();
-            console.log('Saved Pantry ID:', pantryId ? `"${pantryId}"` : 'NOT SET');
+    /* ================================================
+       EVENT MANAGER - Priority 2: Proper Cleanup
+       ================================================ */
+    class EventManager {
+        constructor() {
+            this.listeners = [];
+        }
 
-            if (!pantryId) {
-                console.error('Pantry ID missing. Set it in config.');
-                return;
+        add(element, event, handler, options = {}) {
+            if (!element) return;
+            element.addEventListener(event, handler, options);
+            this.listeners.push({ element, event, handler, options });
+        }
+
+        remove(element, event, handler) {
+            const index = this.listeners.findIndex(
+                l => l.element === element && l.event === event && l.handler === handler
+            );
+            if (index !== -1) {
+                const { element: el, event: evt, handler: h } = this.listeners[index];
+                el.removeEventListener(evt, h);
+                this.listeners.splice(index, 1);
             }
+        }
 
+        removeAll() {
+            this.listeners.forEach(({ element, event, handler }) => {
+                if (element && element.removeEventListener) {
+                    element.removeEventListener(event, handler);
+                }
+            });
+            this.listeners = [];
+        }
+    }
+
+    const eventManager = new EventManager();
+
+    /* ================================================
+       DOM CACHE MANAGER - Priority 3: Cache DOM Queries
+       ================================================ */
+    const DOMCache = {
+        cache: {},
+
+        get(selector, forceRefresh = false) {
+            if (forceRefresh || !this.cache[selector] || !document.contains(this.cache[selector])) {
+                this.cache[selector] = document.querySelector(selector);
+            }
+            return this.cache[selector];
+        },
+
+        getAll(selector, forceRefresh = false) {
+            if (forceRefresh) {
+                return document.querySelectorAll(selector);
+            }
+            return document.querySelectorAll(selector);
+        },
+
+        clear(selector = null) {
+            if (selector) {
+                delete this.cache[selector];
+            } else {
+                this.cache = {};
+            }
+        },
+
+        refresh() {
+            AppState.domCache.navActions = this.get('.nav-actions', true);
+            AppState.domCache.layerPanel = this.get('.layer-panel', true);
+            AppState.domCache.googleBtn = this.get('.google-signin-btn span', true);
+            AppState.domCache.usageDiv = this.get('div.usage-counter', true);
+        }
+    };
+
+    /* ================================================
+       STORAGE MANAGER - Priority 4: Extract Constants
+       ================================================ */
+    const StorageManager = {
+        getLocalData() {
             const data = {};
-            STORAGE_KEYS.forEach(k => {
+            CONFIG.STORAGE_KEYS.forEach(k => {
                 const v = localStorage.getItem(k);
-                console.log(`localStorage[${k}]:`, v);
-                if (v !== null) {
-                    try {
-                        data[k] = JSON.parse(v);
-                    } catch {
-                        data[k] = v;
-                    }
+                if (v !== null) data[k] = v;
+            });
+            return data;
+        },
+
+        setLocalData(data) {
+            Object.keys(data).forEach(k => {
+                if (CONFIG.STORAGE_KEYS.includes(k)) {
+                    localStorage.setItem(k, data[k]);
                 }
             });
+        },
 
-            console.log('Final data object:', data);
+        clearLocalData() {
+            CONFIG.STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
+        },
 
-            let jsonStr;
-            try {
-                jsonStr = JSON.stringify(data);
-                console.log('JSON stringified OK');
-            } catch (e) {
-                console.error('JSON.stringify FAILED:', e.message);
-                return;
+        getBoardProgress() {
+            const raw = localStorage.getItem('trickcal_board_progress');
+            if (raw === AppState.lastBoardProgressRaw && AppState.cachedBoardProgress) {
+                return AppState.cachedBoardProgress;
             }
 
-            const url = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/${BASKET_NAME}`;
-            console.log('PUT URL:', url);
-
+            AppState.lastBoardProgressRaw = raw;
             try {
-                const res = await fetch(url, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: jsonStr
-                });
+                AppState.cachedBoardProgress = raw ? JSON.parse(raw) : null;
+            } catch (e) {
+                console.error('Failed to parse board progress:', e);
+                AppState.cachedBoardProgress = null;
+            }
+            return AppState.cachedBoardProgress;
+        },
 
-                const text = await res.text();
-                if (res.ok) {
-                    console.log('SUCCESS! Basket created/updated');
-                    console.log('Response:', text);
+        invalidateBoardProgressCache() {
+            AppState.cachedBoardProgress = null;
+            AppState.lastBoardProgressRaw = null;
+        }
+    };
+
+    /* ================================================
+       GM STORAGE WRAPPER
+       ================================================ */
+    const GMStorage = {
+        get(key, defaultValue = null) {
+            return GM_getValue(key, defaultValue);
+        },
+
+        set(key, value) {
+            GM_setValue(key, value);
+        },
+
+        delete(key) {
+            GM_deleteValue(key);
+        },
+
+        getPantryId() {
+            return this.get('pantry_id', '').trim();
+        },
+
+        setPantryId(id) {
+            this.set('pantry_id', id.trim());
+        },
+
+        isOnlineSyncEnabled() {
+            return this.get('online_sync_enabled', false);
+        },
+
+        isAutoSyncEnabled() {
+            return this.get('auto_sync_enabled', false);
+        },
+
+        getAutoSyncInterval() {
+            return this.get('auto_sync_interval', CONFIG.AUTO_SYNC_DEFAULT_INTERVAL);
+        },
+
+        getLastSyncDate() {
+            const dateStr = this.get('last_sync_date', new Date().toISOString());
+            return new Date(dateStr);
+        },
+
+        setLastSyncDate(date = new Date()) {
+            this.set('last_sync_date', date.toISOString());
+            const dateElement = DOMCache.get('#kuri-last-sync-date');
+            if (dateElement) {
+                dateElement.innerHTML = Utils.formatDateTime(date);
+            }
+        },
+
+        getLayerMultipliers() {
+            const saved = this.get('layer_multipliers', null);
+            return saved ? JSON.parse(saved) : CONFIG.DEFAULT_LAYER_MULTIPLIERS;
+        },
+
+        setLayerMultipliers(multipliers) {
+            this.set('layer_multipliers', JSON.stringify(multipliers));
+        },
+
+        initLayerMultipliers() {
+            if (!this.get('layer_multipliers', null)) {
+                this.setLayerMultipliers(CONFIG.DEFAULT_LAYER_MULTIPLIERS);
+            }
+        }
+    };
+
+    /* ================================================
+       UTILITIES - Priority 4: Extract Constants
+       ================================================ */
+    const Utils = {
+        formatDateTime(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        },
+
+        getCurrentTheme() {
+            return document.body.getAttribute('data-theme') || 'dark';
+        },
+
+        getCSSVar(varName) {
+            return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        },
+
+        debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+    };
+
+    /* ================================================
+       STATUS INDICATOR CLASS - Priority 5: Refactor
+       ================================================ */
+    class StatusIndicator {
+        constructor(element) {
+            this.element = element;
+            this.timeout = null;
+        }
+
+        set(status) {
+            if (!this.element) return;
+
+            clearTimeout(this.timeout);
+            this.element.className = `kuri-status-indicator kuri-status-${status}`;
+
+            if (['success', 'error'].includes(status)) {
+                this.timeout = setTimeout(() => {
+                    this.set('idle');
+                }, CONFIG.STATUS_RESET_DELAY);
+            }
+        }
+
+        clear() {
+            clearTimeout(this.timeout);
+        }
+    }
+
+    /* ================================================
+       KURIPOPUP CLASS
+       ================================================ */
+    class KuriPopup {
+        constructor({
+                        title = 'Info',
+                        content = '',
+                        yesText = null,
+                        yesCallback = null,
+                        noText = null,
+                        noCallback = null,
+                        closeOnOverlay = true
+                    } = {}) {
+            this.title = title;
+            this.content = content;
+            this.yesText = yesText;
+            this.yesCallback = yesCallback;
+            this.noText = noText;
+            this.noCallback = noCallback;
+            this.closeOnOverlay = closeOnOverlay;
+            this.overlay = null;
+            this.panel = null;
+            this.escHandler = null;
+            this.create();
+        }
+
+        create() {
+            this.remove();
+
+            this.overlay = document.createElement('div');
+            this.overlay.className = 'kuri-popup-overlay';
+
+            this.panel = document.createElement('div');
+            this.panel.className = 'kuri-popup-panel';
+
+            const titleEl = document.createElement('h3');
+            titleEl.textContent = this.title;
+            titleEl.className = 'kuri-popup-title';
+
+            const contentEl = document.createElement('div');
+            contentEl.innerHTML = this.content;
+            contentEl.className = 'kuri-popup-content';
+
+            const btnContainer = document.createElement('div');
+            btnContainer.className = 'kuri-popup-btn-container';
+
+            if (this.yesText) {
+                const yesBtn = document.createElement('button');
+                yesBtn.textContent = this.yesText;
+                yesBtn.className = 'kuri-btn-base kuri-popup-yes-btn';
+                yesBtn.onclick = () => {
+                    this.yesCallback?.();
+                    this.remove();
+                };
+                btnContainer.appendChild(yesBtn);
+            }
+
+            if (this.noText) {
+                const noBtn = document.createElement('button');
+                noBtn.textContent = this.noText;
+                noBtn.className = 'kuri-btn-base kuri-popup-no-btn';
+                noBtn.onclick = () => {
+                    this.noCallback?.();
+                    this.remove();
+                };
+                btnContainer.appendChild(noBtn);
+            }
+
+            if (!this.yesText && !this.noText) {
+                const okBtn = document.createElement('button');
+                okBtn.textContent = 'OK';
+                okBtn.className = 'kuri-btn-base kuri-popup-ok-btn';
+                okBtn.onclick = () => this.remove();
+                btnContainer.appendChild(okBtn);
+            }
+
+            this.panel.appendChild(titleEl);
+            this.panel.appendChild(contentEl);
+            this.panel.appendChild(btnContainer);
+            this.overlay.appendChild(this.panel);
+            document.body.appendChild(this.overlay);
+
+            if (this.closeOnOverlay) {
+                eventManager.add(this.overlay, 'click', (e) => {
+                    if (e.target === this.overlay) this.remove();
+                });
+            }
+
+            this.escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    this.remove();
+                }
+            };
+            eventManager.add(document, 'keydown', this.escHandler);
+        }
+
+        remove() {
+            if (this.overlay && this.overlay.parentNode) {
+                this.overlay.classList.add('kuri-popup-fade-out');
+                this.panel.classList.add('kuri-popup-scale-out');
+                setTimeout(() => {
+                    this.overlay.remove();
+                    if (this.escHandler) {
+                        eventManager.remove(document, 'keydown', this.escHandler);
+                    }
+                }, 200);
+            }
+        }
+    }
+
+    /* ================================================
+       PANTRY CLIENT
+       ================================================ */
+    class Pantry {
+        constructor(pantryId) {
+            if (!pantryId) throw new Error('Pantry ID required');
+            this.base = `https://getpantry.cloud/apiv1/pantry/${pantryId}`;
+        }
+
+        _req(method, url, data = null) {
+            return new Promise((resolve, reject) => {
+                const opts = {
+                    method,
+                    url,
+                    responseType: 'json',
+                    headers: { 'Content-Type': 'application/json' },
+                    onload: r => (r.status >= 200 && r.status < 300)
+                        ? resolve(r.response)
+                        : reject(new Error(`${r.status} ${r.statusText}`)),
+                    onerror: reject
+                };
+                if (data) opts.data = JSON.stringify(data);
+                if (typeof GM !== 'undefined' && GM.xmlHttpRequest) {
+                    GM.xmlHttpRequest(opts);
+                } else if (typeof GM_xmlhttpRequest !== 'undefined') {
+                    GM_xmlhttpRequest(opts);
                 } else {
-                    console.error(`HTTP ${res.status}:`, text);
+                    reject(new Error('No HTTP client'));
                 }
-            } catch (e) {
-                console.error('Fetch failed:', e);
-            }
-        }, 3000);
-    }
-
-    function getCurrentTheme() {
-        return document.body.getAttribute('data-theme') || 'dark';
-    }
-
-    function getCSSVar(v) {
-        return getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-    }
-
-    function setLastSyncDate(date) {
-        if (date == null) {
-            date = new Date();
+            });
         }
 
-        GM_setValue('last_sync_date', date.toISOString());
-
-        if (document.querySelector('#kuri-last-sync-date')) {
-            document.querySelector('#kuri-last-sync-date').innerHTML = formatDateTime(date);
+        details() {
+            return this._req('GET', this.base);
         }
+
+        basket = {
+            get: name => this._req('GET', `${this.base}/basket/${name}`),
+            create: (name, data) => this._req('POST', `${this.base}/basket/${name}`, data),
+            update: (name, data) => this._req('PUT', `${this.base}/basket/${name}`, data),
+            delete: name => this._req('DELETE', `${this.base}/basket/${name}`)
+        };
     }
 
-    function formatDateTime(date) {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        const seconds = String(date.getSeconds()).padStart(2, '0');
-
-        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-    }
-
-    function getLocalStorageData() {
-        const data = {};
-        STORAGE_KEYS.forEach(k => {
-            const v = localStorage.getItem(k);
-            if (v !== null) data[k] = v;
-        });
-        return data;
-    }
-
-    function setLocalStorageData(data) {
-        Object.keys(data).forEach(k => {
-            if (STORAGE_KEYS.includes(k)) localStorage.setItem(k, data[k]);
-        });
-    }
-
-    function clearLocalStorageData() {
-        STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
-    }
-
-    async function syncNowLocal(statusIndicator) {
-        try {
-            updateStatus(statusIndicator, 'syncing');
-            const data = getLocalStorageData();
-            const now = new Date();
-            GM_setValue('trickcal_sync_data', JSON.stringify({
-                data,
-                timestamp: now.toISOString()
-            }));
-            setLastSyncDate(now);
-            updateStatus(statusIndicator, 'success');
-            showNotification('✅ Local sync successful!', 'success');
-        } catch (e) {
-            updateStatus(statusIndicator, 'error');
-            showNotification('❌ Local sync failed: ' + e.message, 'error');
-            console.error(e);
-        }
-    }
-
-    async function clearAndPullLocal(statusIndicator) {
-        try {
-            updateStatus(statusIndicator, 'syncing');
-            const raw = GM_getValue('trickcal_sync_data', null);
-            if (!raw) {
-                updateStatus(statusIndicator, 'idle');
-                return showNotification('No local synced data', 'warning');
-            }
-            const {
-                data
-            } = JSON.parse(raw);
-            clearLocalStorageData();
-            setLocalStorageData(data);
-            updateStatus(statusIndicator, 'success');
-            showNotification('Local data restored!', 'success');
-            setTimeout(() => location.reload(), 1000);
-        } catch (e) {
-            updateStatus(statusIndicator, 'error');
-            showNotification('Pull failed: ' + e.message, 'error');
-            console.error(e);
-        }
-    }
-
-    function getPantryId() {
-        return GM_getValue('pantry_id', '').trim();
-    }
-
-    function setPantryId(id) {
-        GM_setValue('pantry_id', id.trim());
-    }
-
-    function isOnlineSyncEnabled() {
-        return GM_getValue('online_sync_enabled', false);
-    }
-
-    function initPantryClient() {
-        const id = getPantryId();
-        if (id) {
-            try {
-                pantryClient = new Pantry(id);
-            } catch (e) {
-                pantryClient = null;
-                showNotification('Invalid Pantry ID', 'error');
-            }
-        } else {
-            pantryClient = null;
-        }
-    }
-
-    async function syncNowOnline(statusIndicator) {
-        if (!pantryClient) {
-            showNotification('Pantry ID not set', 'warning');
-            return;
-        }
-        try {
-            updateStatus(statusIndicator, 'syncing');
-            const data = getLocalStorageData();
-            setLastSyncDate(new Date());
-
-            await pantryClient.basket.create(BASKET_NAME, data);
-
-            updateStatus(statusIndicator, 'success');
-            showNotification('✅ Online sync successful!', 'success');
-        } catch (e) {
-            updateStatus(statusIndicator, 'error');
-            showNotification('Online sync failed: ' + e.message, 'error');
-            console.error('Pantry sync error:', e);
-        }
-    }
-
-    async function forceResyncOnline(statusIndicator) {
-        if (!pantryClient) return showNotification('Pantry ID not set', 'warning');
-        try {
-            updateStatus(statusIndicator, 'syncing');
-            const remote = await pantryClient.basket.get(BASKET_NAME);
-            clearLocalStorageData();
-            setLocalStorageData(remote);
-            updateStatus(statusIndicator, 'success');
-            showNotification('Online data pulled!', 'success');
-            setTimeout(() => location.reload(), 1000);
-        } catch (e) {
-            updateStatus(statusIndicator, 'error');
-            if (e.message.includes('404')) {
-                showNotification('No online data found', 'warning');
+    /* ================================================
+       SYNC MANAGER - Priority 5: Separate Concerns
+       ================================================ */
+    const SyncManager = {
+        initPantryClient() {
+            const id = GMStorage.getPantryId();
+            if (id) {
+                try {
+                    AppState.pantryClient = new Pantry(id);
+                } catch (e) {
+                    AppState.pantryClient = null;
+                    UIManager.showNotification('Invalid Pantry ID', 'error');
+                }
             } else {
-                showNotification('Pull failed: ' + e.message, 'error');
+                AppState.pantryClient = null;
             }
-            console.error(e);
-        }
-    }
+        },
 
-    function startAutoSync(seconds, indicator) {
-        try {
-            stopAutoSync();
-            autoSyncInterval = setInterval(() => {
-                syncNowLocal(indicator).then(() => {
-                    if (isOnlineSyncEnabled() && pantryClient) {
-                        syncNowOnline(indicator);
+        async syncLocal(statusIndicator) {
+            try {
+                if (statusIndicator) statusIndicator.set('syncing');
+
+                const data = StorageManager.getLocalData();
+                const now = new Date();
+
+                GMStorage.set('trickcal_sync_data', JSON.stringify({
+                    data,
+                    timestamp: now.toISOString()
+                }));
+
+                GMStorage.setLastSyncDate(now);
+
+                if (statusIndicator) statusIndicator.set('success');
+                UIManager.showNotification('✅ Local sync successful!', 'success');
+            } catch (e) {
+                if (statusIndicator) statusIndicator.set('error');
+                UIManager.showNotification('❌ Local sync failed: ' + e.message, 'error');
+                console.error(e);
+            }
+        },
+
+        async syncOnline(statusIndicator) {
+            if (!AppState.pantryClient) {
+                UIManager.showNotification('Pantry ID not set', 'warning');
+                return;
+            }
+
+            try {
+                if (statusIndicator) statusIndicator.set('syncing');
+
+                const data = StorageManager.getLocalData();
+                GMStorage.setLastSyncDate(new Date());
+
+                await AppState.pantryClient.basket.create(CONFIG.BASKET_NAME, data);
+
+                if (statusIndicator) statusIndicator.set('success');
+                UIManager.showNotification('✅ Online sync successful!', 'success');
+            } catch (e) {
+                if (statusIndicator) statusIndicator.set('error');
+                UIManager.showNotification('Online sync failed: ' + e.message, 'error');
+                console.error('Pantry sync error:', e);
+            }
+        },
+
+        async clearAndPullLocal(statusIndicator) {
+            try {
+                if (statusIndicator) statusIndicator.set('syncing');
+
+                const raw = GMStorage.get('trickcal_sync_data', null);
+                if (!raw) {
+                    if (statusIndicator) statusIndicator.set('idle');
+                    return UIManager.showNotification('No local synced data', 'warning');
+                }
+
+                const { data } = JSON.parse(raw);
+                StorageManager.clearLocalData();
+                StorageManager.setLocalData(data);
+
+                if (statusIndicator) statusIndicator.set('success');
+                UIManager.showNotification('Local data restored!', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } catch (e) {
+                if (statusIndicator) statusIndicator.set('error');
+                UIManager.showNotification('Pull failed: ' + e.message, 'error');
+                console.error(e);
+            }
+        },
+
+        async forceResyncOnline(statusIndicator) {
+            if (!AppState.pantryClient) {
+                return UIManager.showNotification('Pantry ID not set', 'warning');
+            }
+
+            try {
+                if (statusIndicator) statusIndicator.set('syncing');
+
+                const remote = await AppState.pantryClient.basket.get(CONFIG.BASKET_NAME);
+                StorageManager.clearLocalData();
+                StorageManager.setLocalData(remote);
+
+                if (statusIndicator) statusIndicator.set('success');
+                UIManager.showNotification('Online data pulled!', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } catch (e) {
+                if (statusIndicator) statusIndicator.set('error');
+                if (e.message.includes('404')) {
+                    UIManager.showNotification('No online data found', 'warning');
+                } else {
+                    UIManager.showNotification('Pull failed: ' + e.message, 'error');
+                }
+                console.error(e);
+            }
+        },
+
+        startAutoSync(seconds, indicator) {
+            try {
+                this.stopAutoSync();
+                AppState.autoSyncInterval = setInterval(() => {
+                    this.syncLocal(indicator).then(() => {
+                        if (GMStorage.isOnlineSyncEnabled() && AppState.pantryClient) {
+                            this.syncOnline(indicator);
+                        }
+                    });
+                }, seconds * 1000);
+                GMStorage.set('auto_sync_interval', seconds);
+                GMStorage.set('auto_sync_enabled', true);
+                UIManager.showNotification(`⏱️ Auto-sync started (${seconds}s)`, 'info');
+            } catch (e) {
+                console.error('startAutoSync error', e);
+            }
+        },
+
+        stopAutoSync() {
+            if (AppState.autoSyncInterval) {
+                clearInterval(AppState.autoSyncInterval);
+            }
+            AppState.autoSyncInterval = null;
+            GMStorage.delete('auto_sync_enabled');
+        }
+    };
+
+    /* ================================================
+       BACKUP MANAGER
+       ================================================ */
+    const BackupManager = {
+        exportToJson() {
+            const raw = GMStorage.get('trickcal_sync_data', null);
+            if (!raw) {
+                return UIManager.showNotification('⚠️ Nothing to export', 'warning');
+            }
+
+            const blob = new Blob([raw], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `trickcal-backup.${Utils.formatDateTime(new Date()).replace(' ', '_')}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            UIManager.showNotification('📤 Exported JSON backup', 'success');
+        },
+
+        importFromJson() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async e => {
+                const f = e.target.files[0];
+                if (!f) return;
+
+                try {
+                    const text = await f.text();
+                    const parsed = JSON.parse(text);
+
+                    GMStorage.set('trickcal_sync_data', JSON.stringify({
+                        data: parsed.data || parsed,
+                        timestamp: new Date().toISOString()
+                    }));
+
+                    StorageManager.clearLocalData();
+                    StorageManager.setLocalData(parsed.data || parsed);
+                    UIManager.showNotification('📥 Imported JSON! Reloading...', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } catch (err) {
+                    UIManager.showNotification('❌ Import failed: ' + err.message, 'error');
+                }
+            };
+            input.click();
+        }
+    };
+
+    /* ================================================
+       BOARD DATA MANAGER - Priority 3: Cache
+       ================================================ */
+    const BoardDataManager = {
+        async fetchBoardData() {
+            if (AppState.boardDataCache) {
+                return AppState.boardDataCache;
+            }
+
+            try {
+                const response = await fetch('/board/data.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                AppState.boardDataCache = await response.json();
+                return AppState.boardDataCache;
+            } catch (err) {
+                console.error('Failed to fetch board data:', err);
+                return null;
+            }
+        },
+
+        getTotalCellsFromBoardData(layerNumber) {
+            if (!AppState.boardDataCache || !AppState.boardDataCache.characterBoards) {
+                return { attack: '?', crit: '?', hp: '?', defense: '?', critResist: '?' };
+            }
+
+            const layerKey = `layer${layerNumber}`;
+            const totals = { attack: 0, crit: 0, hp: 0, defense: 0, critResist: 0 };
+
+            Object.values(AppState.boardDataCache.characterBoards).forEach(character => {
+                const layer = character[layerKey];
+                if (layer && Array.isArray(layer)) {
+                    layer.forEach(cellType => {
+                        if (totals.hasOwnProperty(cellType)) {
+                            totals[cellType]++;
+                        }
+                    });
+                }
+            })
+
+            return totals;
+        }
+    };
+
+    /* ================================================
+       LAYER STATS MANAGER - Priority 5: Refactor
+       ================================================ */
+    const LayerStatsManager = {
+        getCurrentActiveLayer() {
+            const activeTab = DOMCache.get('.layer-panel .tab-btn.active');
+            if (activeTab) {
+                const match = activeTab.textContent.trim().match(/Layer (\d+)/i);
+                if (match) return parseInt(match[1], 10);
+            }
+            return 1;
+        },
+
+        calculateLayerStats(layerNumber) {
+            const boardProgress = StorageManager.getBoardProgress();
+
+            if (!boardProgress) {
+                return {
+                    attack: { count: '?', total: '?', percentage: '?' },
+                    crit: { count: '?', total: '?', percentage: '?' },
+                    hp: { count: '?', total: '?', percentage: '?' },
+                    defense: { count: '?', total: '?', percentage: '?' },
+                    critResist: { count: '?', total: '?', percentage: '?' }
+                };
+            }
+
+            const activatedCells = boardProgress.activatedCells || {};
+            const multipliers = GMStorage.getLayerMultipliers();
+            const layerKey = `layer${layerNumber}`;
+            const layerMultiplier = multipliers[layerKey] || CONFIG.DEFAULT_LAYER_MULTIPLIERS[layerKey];
+
+            const stats = { attack: 0, crit: 0, hp: 0, defense: 0, critResist: 0 };
+
+            Object.keys(activatedCells).forEach(key => {
+                if (activatedCells[key] === true) {
+                    const parts = key.split('_');
+                    if (parts.length >= 3) {
+                        const keyLayer = parts[parts.length - 2];
+                        const statusType = parts[parts.length - 1];
+
+                        if (keyLayer === layerKey && stats.hasOwnProperty(statusType)) {
+                            stats[statusType]++;
+                        }
+                    }
+                }
+            });
+
+            const totals = BoardDataManager.getTotalCellsFromBoardData(layerNumber);
+
+            return {
+                attack: {
+                    percentage: Math.floor(stats.attack * layerMultiplier.attack),
+                    count: stats.attack,
+                    total: totals.attack
+                },
+                crit: {
+                    percentage: Math.floor(stats.crit * layerMultiplier.crit),
+                    count: stats.crit,
+                    total: totals.crit
+                },
+                hp: {
+                    percentage: Math.floor(stats.hp * layerMultiplier.hp),
+                    count: stats.hp,
+                    total: totals.hp
+                },
+                defense: {
+                    percentage: Math.floor(stats.defense * layerMultiplier.defense),
+                    count: stats.defense,
+                    total: totals.defense
+                },
+                critResist: {
+                    percentage: Math.floor(stats.critResist * layerMultiplier.critResist),
+                    count: stats.critResist,
+                    total: totals.critResist
+                }
+            };
+        },
+
+        createLayerStatsDisplay(stats) {
+            return `
+                <div class="panel-card kuri-layer-stats">
+                    <div class="layer-summary">
+                        <h3 class="kuri-summary-title">Layer Bonus Stats</h3>
+                        <div class="kuri-stat-item">
+                            <span class="kuri-stat-label">Attack</span>
+                            <span class="kuri-stat-value">+${stats.attack.percentage}% [${stats.attack.count}/${stats.attack.total}]</span>
+                        </div>
+                        <div class="kuri-stat-item">
+                            <span class="kuri-stat-label">Critical</span>
+                            <span class="kuri-stat-value">+${stats.crit.percentage}% [${stats.crit.count}/${stats.crit.total}]</span>
+                        </div>
+                        <div class="kuri-stat-item">
+                            <span class="kuri-stat-label">HP</span>
+                            <span class="kuri-stat-value">+${stats.hp.percentage}% [${stats.hp.count}/${stats.hp.total}]</span>
+                        </div>
+                        <div class="kuri-stat-item">
+                            <span class="kuri-stat-label">Crit Resist</span>
+                            <span class="kuri-stat-value">+${stats.critResist.percentage}% [${stats.critResist.count}/${stats.critResist.total}]</span>
+                        </div>
+                        <div class="kuri-stat-item">
+                            <span class="kuri-stat-label">Defense</span>
+                            <span class="kuri-stat-value">+${stats.defense.percentage}% [${stats.defense.count}/${stats.defense.total}]</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        },
+
+        updateLayerStatsDisplay(layerNumber) {
+            const stats = this.calculateLayerStats(layerNumber);
+            const existingStats = DOMCache.get('.kuri-layer-stats');
+            const statsHTML = this.createLayerStatsDisplay(stats);
+
+            if (existingStats) {
+                existingStats.outerHTML = statsHTML;
+            } else {
+                const firstPanelCard = DOMCache.get('.layer-panel .panel-card');
+                if (firstPanelCard) {
+                    firstPanelCard.insertAdjacentHTML('afterend', statsHTML);
+                }
+            }
+            DOMCache.clear('.kuri-layer-stats');
+        },
+
+        initLayerStatsDisplay() {
+            const layerPanel = DOMCache.get('.layer-panel');
+            if (!layerPanel) return false;
+
+            GMStorage.initLayerMultipliers();
+
+            BoardDataManager.fetchBoardData().then(() => {
+                const currentLayer = this.getCurrentActiveLayer();
+                this.updateLayerStatsDisplay(currentLayer);
+
+                const tabButtons = DOMCache.getAll('.layer-panel .tab-btn');
+                tabButtons.forEach((btn, index) => {
+                    const handler = () => {
+                        setTimeout(() => {
+                            const layerNum = index + 1;
+                            this.updateLayerStatsDisplay(layerNum);
+                        }, CONFIG.STATS_UPDATE_DELAY);
+                    };
+                    eventManager.add(btn, 'click', handler);
+                });
+            });
+
+            return true;
+        },
+
+        watchLocalStorageChanges() {
+            const originalSetItem = localStorage.setItem;
+            localStorage.setItem = function(key, value) {
+                originalSetItem.apply(this, arguments);
+                if (key === 'trickcal_board_progress') {
+                    StorageManager.invalidateBoardProgressCache();
+                    setTimeout(() => {
+                        const currentLayer = LayerStatsManager.getCurrentActiveLayer();
+                        LayerStatsManager.updateLayerStatsDisplay(currentLayer);
+                    }, CONFIG.STATS_UPDATE_DELAY);
+                }
+            };
+        }
+    };
+
+    /* ================================================
+       UI MANAGER - Priority 5: Separate Concerns
+       ================================================ */
+    const UIManager = {
+        showNotification(message, type = 'info', duration = CONFIG.NOTIFICATION_DURATION) {
+            let container = DOMCache.get('.kuri-notification-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.className = 'kuri-notification-container';
+                document.body.appendChild(container);
+            }
+
+            const notif = document.createElement('div');
+            notif.className = `kuri-notification kuri-notification-${type}`;
+            notif.textContent = message;
+            container.appendChild(notif);
+
+            void notif.offsetWidth;
+
+            setTimeout(() => {
+                notif.classList.add('kuri-notification-exit');
+                eventManager.add(notif, 'animationend', () => notif.remove());
+            }, duration);
+        },
+
+        createSyncDropdown() {
+            const container = document.createElement('div');
+            container.className = 'kuri-cp-container';
+
+            const mainButton = document.createElement('button');
+            mainButton.className = 'kuri-cp-button';
+            const chevron = document.createElement('span');
+            chevron.className = 'kuri-cp-chevron';
+            chevron.textContent = '▼';
+            mainButton.innerHTML = `<span>⚙️</span><span>Kuri CP</span>`;
+            mainButton.appendChild(chevron);
+
+            const statusIndicatorElement = document.createElement('span');
+            statusIndicatorElement.className = 'kuri-status-indicator kuri-status-idle';
+            const statusIndicator = new StatusIndicator(statusIndicatorElement);
+
+            const dropdownMenu = document.createElement('div');
+            dropdownMenu.className = 'kuri-dropdown-menu';
+
+            const dropdownHeader = document.createElement('div');
+            dropdownHeader.className = 'kuri-dropdown-header';
+            dropdownHeader.innerHTML = `<h3>Kurisutaru CP Sync</h3>`;
+            dropdownMenu.appendChild(dropdownHeader);
+
+            const list = document.createElement('div');
+            list.className = 'kuri-dropdown-list';
+
+            CONFIG.MENU_ITEMS.forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'kuri-dropdown-item';
+                btn.innerHTML = `<span class="kuri-dropdown-icon">${item.icon}</span><div class="kuri-dropdown-text"><div class="kuri-dropdown-name">${item.name}</div><div class="kuri-dropdown-desc">${item.desc}</div></div>`;
+
+                const handler = async (e) => {
+                    e.stopPropagation();
+                    dropdownMenu.classList.remove('kuri-dropdown-open');
+                    AppState.isDropdownOpen = false;
+                    mainButton.classList.remove('active');
+                    await this.handleSyncAction(item.id, statusIndicator);
+                };
+
+                eventManager.add(btn, 'click', handler);
+                list.appendChild(btn);
+            });
+            dropdownMenu.appendChild(list);
+
+            const mainButtonHandler = (e) => {
+                e.stopPropagation();
+                AppState.isDropdownOpen = !AppState.isDropdownOpen;
+                if (AppState.isDropdownOpen) {
+                    dropdownMenu.classList.add('kuri-dropdown-open');
+                    mainButton.classList.add('active');
+                } else {
+                    dropdownMenu.classList.remove('kuri-dropdown-open');
+                    mainButton.classList.remove('active');
+                }
+            };
+            eventManager.add(mainButton, 'click', mainButtonHandler);
+
+            const documentClickHandler = (e) => {
+                if (!container.contains(e.target)) {
+                    dropdownMenu.classList.remove('kuri-dropdown-open');
+                    AppState.isDropdownOpen = false;
+                    mainButton.classList.remove('active');
+                }
+            };
+            eventManager.add(document, 'click', documentClickHandler);
+
+            container.appendChild(mainButton);
+            container.appendChild(statusIndicatorElement);
+            container.appendChild(dropdownMenu);
+            return { container, statusIndicator };
+        },
+
+        async handleSyncAction(action, indicator) {
+            if (action === 'open_config') {
+                return this.createConfigOverlay(indicator);
+            }
+            if (action === 'sync_now') {
+                await SyncManager.syncLocal(indicator);
+                if (GMStorage.isOnlineSyncEnabled() && AppState.pantryClient) {
+                    await SyncManager.syncOnline(indicator);
+                }
+            }
+        },
+
+        createConfigOverlay(statusIndicator) {
+            if (DOMCache.get('.kuri-config-overlay')) return;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'kuri-config-overlay';
+
+            const panel = document.createElement('div');
+            panel.className = 'kuri-config-panel';
+
+            const enabled = GMStorage.isAutoSyncEnabled();
+            const interval = GMStorage.getAutoSyncInterval();
+            const lastSyncDate = GMStorage.getLastSyncDate();
+            const onlineEnabled = GMStorage.isOnlineSyncEnabled();
+            const pantryId = GMStorage.getPantryId();
+
+            panel.innerHTML = `
+                <div class="kuri-config-header">
+                    <h3>⚙️ Kurisutaru CP Config</h3>
+                </div>
+                <h3 class="kuri-config-section-title">🗂️ Sync Options</h3>
+                <div class="kuri-config-row">
+                    <span>Last Sync Date</span>
+                    <span id="kuri-last-sync-date">${!isNaN(lastSyncDate) ? Utils.formatDateTime(lastSyncDate) : '-'}</span>
+                </div>
+                <hr class="kuri-config-divider">
+                <div class="kuri-config-row">
+                    <span>Enable Auto Sync</span>
+                    <label class="kuri-switch"><input type="checkbox" id="cfg-autosync-toggle" ${enabled ? 'checked' : ''}><span class="kuri-slider"></span></label>
+                </div>
+                <div class="kuri-config-input-group">
+                    <label>Auto Sync Interval (seconds):</label>
+                    <input id="cfg-autosync" type="number" min="10" step="10" class="kuri-config-input" value="${interval}">
+                </div>
+                <div class="kuri-config-btn-group">
+                    <button id="btn-sync-now" class="kuri-btn-base kuri-btn-primary kuri-flex-1">🔄 Sync Now</button>
+                    <button id="btn-force-resync" class="kuri-btn-base kuri-btn-secondary kuri-flex-1">🗑️ Force Resync</button>
+                </div>
+                <hr class="kuri-config-divider">
+                <h3 class="kuri-config-section-title">🌐 Online Sync</h3>
+                <div class="kuri-config-row">
+                    <span>Enable Online Sync</span>
+                    <label class="kuri-switch"><input type="checkbox" id="cfg-online-toggle" ${onlineEnabled ? 'checked' : ''}><span class="kuri-slider"></span></label>
+                </div>
+                <div class="kuri-config-input-group">
+                    <label>🍊Pantry ID <span id="pantry-info" class="kuri-config-info-btn">[?]</span></label>
+                    <input id="cfg-pantry-id" type="text" placeholder="Your Pantry ID" class="kuri-config-input" value="${pantryId}">
+                </div>
+                <div class="kuri-config-btn-group">
+                    <button id="btn-online-sync" class="kuri-btn-base kuri-btn-primary kuri-flex-1">🔄 Sync Now</button>
+                    <button id="btn-online-pull" class="kuri-btn-base kuri-btn-secondary kuri-flex-1">🗑️ Force Resync</button>
+                </div>
+                <hr class="kuri-config-divider">
+                <h3 class="kuri-config-section-title">💾 Backup Options</h3>
+                <div class="kuri-config-btn-group">
+                    <button id="btn-export" class="kuri-btn-base kuri-btn-success kuri-flex-1">📤 Export JSON</button>
+                    <button id="btn-import" class="kuri-btn-base kuri-btn-warning kuri-flex-1">📥 Import JSON</button>
+                </div>
+                <div class="kuri-config-footer">
+                    <button id="cfg-save" class="kuri-btn-base kuri-popup-yes-btn">Save</button>
+                    <button id="cfg-close" class="kuri-btn-base kuri-popup-no-btn">Cancel</button>
+                </div>
+            `;
+
+            overlay.appendChild(panel);
+            document.body.appendChild(overlay);
+
+            // Event Handlers
+            eventManager.add(panel.querySelector('#pantry-info'), 'click', () => {
+                new KuriPopup({
+                    title: '🪣getPantry.cloud',
+                    content: `You can create your free online storage at<br><a href="https://getpantry.cloud" target="_blank" style="color:var(--primary-color);text-decoration:none;font-weight:bold;">getPantry.cloud</a>.`,
+                    yesText: 'getPantry.cloud',
+                    yesCallback: () => window.open("https://getpantry.cloud", "_blank"),
+                    noText: 'Ok',
+                });
+            });
+
+            eventManager.add(panel.querySelector('#btn-sync-now'), 'click', () => {
+                SyncManager.syncLocal(statusIndicator).then(() => {
+                    if (GMStorage.isOnlineSyncEnabled() && AppState.pantryClient) {
+                        SyncManager.syncOnline(statusIndicator);
                     }
                 });
-            }, seconds * 1000);
-            GM_setValue('auto_sync_interval', seconds);
-            GM_setValue('auto_sync_enabled', true);
-            showNotification(`⏱️ Auto-sync started (${seconds}s)`, 'info');
-        } catch (e) {
-            console.error('startAutoSync error', e);
-        }
-    }
-
-    function stopAutoSync() {
-        if (autoSyncInterval) clearInterval(autoSyncInterval);
-        autoSyncInterval = null;
-        GM_deleteValue('auto_sync_enabled');
-    }
-
-    function exportToJson() {
-        const raw = GM_getValue('trickcal_sync_data', null);
-        if (!raw) return showNotification('⚠️ Nothing to export', 'warning');
-        const blob = new Blob([raw], {
-            type: 'application/json'
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `trickcal-backup.${formatDateTime(new Date()).replace(' ', '_')}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        showNotification('📤 Exported JSON backup', 'success');
-    }
-
-    function importFromJson() {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.json';
-        input.onchange = async e => {
-            const f = e.target.files[0];
-            if (!f) return;
-            try {
-                const text = await f.text();
-                const parsed = JSON.parse(text);
-                GM_setValue('trickcal_sync_data', JSON.stringify({
-                    data: parsed.data || parsed,
-                    timestamp: new Date().toISOString()
-                }));
-                clearLocalStorageData();
-                setLocalStorageData(parsed.data || parsed);
-                showNotification('📥 Imported JSON! Reloading...', 'success');
-                setTimeout(() => location.reload(), 1000);
-            } catch (err) {
-                showNotification('❌ Import failed: ' + err.message, 'error');
-            }
-        };
-        input.click();
-    }
-
-    function updateStatus(indicator, status) {
-        if (!indicator) return;
-        indicator.className = `kuri-status-indicator kuri-status-${status}`;
-        if (['success', 'error'].includes(status)) {
-            setTimeout(() => {
-                indicator.className = 'kuri-status-indicator kuri-status-idle';
-            }, 3000);
-        }
-    }
-
-    function showNotification(message, type = 'info', duration = 3000) {
-        // Create a container once
-        let container = document.querySelector('.kuri-notification-container');
-        if (!container) {
-            container = document.createElement('div');
-            container.className = 'kuri-notification-container';
-            document.body.appendChild(container);
-        }
-
-        // Create the notification
-        const notif = document.createElement('div');
-        notif.className = `kuri-notification kuri-notification-${type}`;
-        notif.textContent = message;
-
-        // Append at the bottom of the stack
-        container.appendChild(notif);
-
-        // Force reflow to trigger CSS animation
-        void notif.offsetWidth;
-
-        // Auto remove after duration
-        setTimeout(() => {
-            notif.classList.add('kuri-notification-exit');
-            notif.addEventListener('animationend', () => {
-                notif.remove();
             });
-        }, duration);
-    }
 
-
-    function createSyncDropdown() {
-        const container = document.createElement('div');
-        container.className = 'kuri-cp-container';
-
-        const mainButton = document.createElement('button');
-        mainButton.className = 'kuri-cp-button';
-        const chevron = document.createElement('span');
-        chevron.className = 'kuri-cp-chevron';
-        chevron.textContent = '▼';
-        mainButton.innerHTML = `<span>⚙️</span><span>Kuri CP</span>`;
-        mainButton.appendChild(chevron);
-
-        const statusIndicator = document.createElement('span');
-        statusIndicator.className = 'kuri-status-indicator kuri-status-idle';
-
-        const dropdownMenu = document.createElement('div');
-        dropdownMenu.className = 'kuri-dropdown-menu';
-
-        const dropdownHeader = document.createElement('div');
-        dropdownHeader.className = 'kuri-dropdown-header';
-        dropdownHeader.innerHTML = `<h3>Kurisutaru CP Sync</h3>`;
-        dropdownMenu.appendChild(dropdownHeader);
-
-        const list = document.createElement('div');
-        list.className = 'kuri-dropdown-list';
-        MENU_ITEMS.forEach(item => {
-            const btn = document.createElement('button');
-            btn.className = 'kuri-dropdown-item';
-            btn.innerHTML = `<span class="kuri-dropdown-icon">${item.icon}</span><div class="kuri-dropdown-text"><div class="kuri-dropdown-name">${item.name}</div><div class="kuri-dropdown-desc">${item.desc}</div></div>`;
-            btn.addEventListener('click', async e => {
-                e.stopPropagation();
-                dropdownMenu.classList.remove('kuri-dropdown-open');
-                isDropdownOpen = false;
-                mainButton.classList.remove('active');
-                await handleSyncAction(item.id, statusIndicator);
+            eventManager.add(panel.querySelector('#btn-force-resync'), 'click', () => {
+                new KuriPopup({
+                    title: '🔄 Force Local Resync ?',
+                    content: 'This will clear and pull from local sync. Continue?',
+                    yesText: 'Yes',
+                    yesCallback: () => SyncManager.clearAndPullLocal(statusIndicator),
+                    noText: 'Cancel',
+                });
             });
-            list.appendChild(btn);
-        });
-        dropdownMenu.appendChild(list);
 
-        mainButton.addEventListener('click', e => {
-            e.stopPropagation();
-            isDropdownOpen = !isDropdownOpen;
-            if (isDropdownOpen) {
-                dropdownMenu.classList.add('kuri-dropdown-open');
-                mainButton.classList.add('active');
-            } else {
-                dropdownMenu.classList.remove('kuri-dropdown-open');
-                mainButton.classList.remove('active');
-            }
-        });
-
-        document.addEventListener('click', e => {
-            if (!container.contains(e.target)) {
-                dropdownMenu.classList.remove('kuri-dropdown-open');
-                isDropdownOpen = false;
-                mainButton.classList.remove('active');
-            }
-        });
-
-        container.appendChild(mainButton);
-        container.appendChild(statusIndicator);
-        container.appendChild(dropdownMenu);
-        return container;
-    }
-
-    function createConfigOverlay(statusIndicator) {
-        if (document.querySelector('.kuri-cp-overlay')) return;
-
-        const overlay = document.createElement('div');
-        overlay.className = 'kuri-config-overlay';
-
-        const panel = document.createElement('div');
-        panel.className = 'kuri-config-panel';
-
-        const enabled = GM_getValue('auto_sync_enabled', false);
-        const interval = GM_getValue('auto_sync_interval', 300);
-        const savedDateStr = GM_getValue('last_sync_date', new Date().toISOString());
-        const lastSyncDate = new Date(savedDateStr);
-        const onlineEnabled = isOnlineSyncEnabled();
-        const pantryId = getPantryId();
-
-        panel.innerHTML = `
-      <div class="kuri-config-header">
-        <h3>⚙️ Kurisutaru CP Config</h3>
-      </div>
-
-      <h3 class="kuri-config-section-title">🗂️ Sync Options</h3>
-      <div class="kuri-config-row">
-        <span>Last Sync Date</span>
-        <span id="kuri-last-sync-date">${!isNaN(lastSyncDate) ? formatDateTime(lastSyncDate) : '-'}</span>
-      </div>
-      <hr class="kuri-config-divider">
-      <div class="kuri-config-row">
-        <span>Enable Auto Sync</span>
-        <label class="kuri-switch"><input type="checkbox" id="cfg-autosync-toggle" ${enabled ? 'checked' : ''}><span class="kuri-slider"></span></label>
-      </div>
-      <div class="kuri-config-input-group">
-        <label>Auto Sync Interval (seconds):</label>
-        <input id="cfg-autosync" type="number" min="10" step="10" class="kuri-config-input" value="${interval}">
-      </div>
-      <div class="kuri-config-btn-group">
-        <button id="btn-sync-now" class="kuri-btn-base kuri-btn-primary kuri-flex-1">🔄 Sync Now</button>
-        <button id="btn-force-resync" class="kuri-btn-base kuri-btn-secondary kuri-flex-1">🗑️ Force Resync</button>
-      </div>
-
-      <hr class="kuri-config-divider">
-
-      <h3 class="kuri-config-section-title">🌐 Online Sync</h3>
-      <div class="kuri-config-row">
-        <span>Enable Online Sync</span>
-        <label class="kuri-switch"><input type="checkbox" id="cfg-online-toggle" ${onlineEnabled ? 'checked' : ''}><span class="kuri-slider"></span></label>
-      </div>
-      <div class="kuri-config-input-group">
-        <label>🍊Pantry ID <span id="pantry-info" class="kuri-config-info-btn">[?]</span></label>
-        <input id="cfg-pantry-id" type="text" placeholder="Your Pantry ID" class="kuri-config-input" value="${pantryId}">
-      </div>
-      <div class="kuri-config-btn-group">
-        <button id="btn-online-sync" class="kuri-btn-base kuri-btn-primary kuri-flex-1">🔄 Sync Now</button>
-        <button id="btn-online-pull" class="kuri-btn-base kuri-btn-secondary kuri-flex-1">🗑️ Force Resync</button>
-      </div>
-
-      <hr class="kuri-config-divider">
-
-      <h3 class="kuri-config-section-title">💾 Backup Options</h3>
-      <div class="kuri-config-btn-group">
-        <button id="btn-export" class="kuri-btn-base kuri-btn-success kuri-flex-1">📤 Export JSON</button>
-        <button id="btn-import" class="kuri-btn-base kuri-btn-warning kuri-flex-1">📥 Import JSON</button>
-      </div>
-
-      <div class="kuri-config-footer">
-        <button id="cfg-save" class="kuri-btn-base kuri-popup-yes-btn">Save</button>
-        <button id="cfg-close" class="kuri-btn-base kuri-popup-no-btn">Cancel</button>
-      </div>
-    `;
-
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-
-        panel.querySelector('#pantry-info').addEventListener('click', () => {
-            new KuriPopup({
-                title: '🍊getPantry.cloud',
-                content: `
-            You can create your free online storage at<br>
-            <a href="https://getpantry.cloud" target="_blank"
-               style="color:var(--primary-color);text-decoration:none;font-weight:bold;">
-               getPantry.cloud
-            </a>.
-            `,
-                yesText: 'getPantry.cloud',
-                yesCallback: () => {
-                    window.open("https://getpantry.cloud", "_blank");
-                },
-                noText: 'Ok',
+            eventManager.add(panel.querySelector('#btn-online-sync'), 'click', () => {
+                if (!AppState.pantryClient) {
+                    UIManager.showNotification('Pantry ID not set', 'warning');
+                    return;
+                }
+                SyncManager.syncLocal(statusIndicator).then(() => SyncManager.syncOnline(statusIndicator));
             });
-        });
 
-        panel.querySelector('#btn-sync-now').onclick = () => {
-            syncNowLocal(statusIndicator).then(() => {
-                if (isOnlineSyncEnabled() && pantryClient) {
-                    syncNowOnline(statusIndicator);
+            eventManager.add(panel.querySelector('#btn-online-pull'), 'click', () => {
+                if (!AppState.pantryClient) {
+                    UIManager.showNotification('Pantry ID not set', 'warning');
+                    return;
+                }
+                new KuriPopup({
+                    title: '🔄 Force Online Resync ?',
+                    content: 'This will pull from Pantry and overwrite local data. Continue?',
+                    yesText: 'Yes',
+                    yesCallback: () => SyncManager.forceResyncOnline(statusIndicator),
+                    noText: 'Cancel',
+                });
+            });
+
+            eventManager.add(panel.querySelector('#btn-export'), 'click', BackupManager.exportToJson);
+            eventManager.add(panel.querySelector('#btn-import'), 'click', BackupManager.importFromJson);
+
+            eventManager.add(panel.querySelector('#cfg-close'), 'click', () => {
+                overlay.remove();
+                DOMCache.clear('.kuri-config-overlay');
+            });
+
+            eventManager.add(overlay, 'click', (e) => {
+                if (e.target === overlay) {
+                    overlay.remove();
+                    DOMCache.clear('.kuri-config-overlay');
                 }
             });
-        };
 
-        panel.querySelector('#btn-force-resync').onclick = () => {
-            new KuriPopup({
-                title: '🔄 Force Local Resync ?',
-                content: `
-                This will clear and pull from local sync. Continue?
-            `,
-                yesText: 'Yes',
-                yesCallback: () => {
-                    clearAndPullLocal(statusIndicator);
-                },
-                noText: 'Cancel',
+            eventManager.add(panel.querySelector('#cfg-save'), 'click', () => {
+                const seconds = parseInt(panel.querySelector('#cfg-autosync').value, 10);
+                const autoEnabled = panel.querySelector('#cfg-autosync-toggle').checked;
+                const onlineEnabled = panel.querySelector('#cfg-online-toggle').checked;
+                const pantryId = panel.querySelector('#cfg-pantry-id').value.trim();
+
+                if (isNaN(seconds) || seconds < CONFIG.MIN_AUTO_SYNC_INTERVAL) {
+                    return UIManager.showNotification(`Interval must be ≥${CONFIG.MIN_AUTO_SYNC_INTERVAL}s`, 'error');
+                }
+
+                GMStorage.set('auto_sync_interval', seconds);
+                GMStorage.set('online_sync_enabled', onlineEnabled);
+
+                if (pantryId) GMStorage.setPantryId(pantryId);
+                else GMStorage.delete('pantry_id');
+
+                SyncManager.initPantryClient();
+
+                if (autoEnabled) SyncManager.startAutoSync(seconds, statusIndicator);
+                else SyncManager.stopAutoSync();
+
+                UIManager.showNotification(`Saved! Auto: ${autoEnabled ? seconds + 's' : 'Off'} | Online: ${onlineEnabled && pantryId ? 'On' : 'Off'}`, 'success');
+                overlay.remove();
+                DOMCache.clear('.kuri-config-overlay');
             });
-        };
+        },
 
-        panel.querySelector('#btn-online-sync').onclick = () => {
-            if (!pantryClient) {
-                showNotification('Pantry ID not set', 'warning');
+        removeGoogleSignInText() {
+            const googleBtn = DOMCache.get('.google-signin-btn span');
+            if (googleBtn && googleBtn.textContent.includes('Sign in with Google')) {
+                googleBtn.remove();
+                return true;
+            }
+            return false;
+        },
+
+        removeTotalUsageText() {
+            const usageDiv = DOMCache.get('div.usage-counter');
+            if (usageDiv) {
+                usageDiv.remove();
+                return true;
+            }
+            return false;
+        }
+    };
+
+    /* ================================================
+       INJECTION MANAGER
+       ================================================ */
+    const InjectionManager = {
+        injectDropdown() {
+            const navActions = DOMCache.get('.nav-actions', true);
+            const existing = DOMCache.get('[data-injected="true"]');
+
+            if (navActions && !existing) {
+                const { container, statusIndicator } = UIManager.createSyncDropdown();
+                container.setAttribute('data-injected', 'true');
+                navActions.prepend(container);
+                AppState.currentDropdown = container;
+
+                console.log('✅ Kuri CP Sync Manager injected!');
+
+                if (GMStorage.isAutoSyncEnabled()) {
+                    const interval = GMStorage.getAutoSyncInterval();
+                    SyncManager.startAutoSync(interval, statusIndicator);
+                }
+
+                return true;
+            }
+            return false;
+        },
+
+        checkAndReinject() {
+            const existing = DOMCache.get('[data-injected="true"]');
+            if (existing && document.contains(existing)) {
+                AppState.currentDropdown = existing;
                 return;
             }
-            syncNowLocal(statusIndicator).then(() => syncNowOnline(statusIndicator));
-        };
 
-        panel.querySelector('#btn-online-pull').onclick = () => {
-            if (!pantryClient) {
-                showNotification('Pantry ID not set', 'warning');
-                return;
+            const navActions = DOMCache.get('.nav-actions');
+            if (navActions && !existing) {
+                this.injectDropdown();
             }
-            new KuriPopup({
-                title: '🔄 Force Online Resync ?',
-                content: `
-                This will pull from Pantry and overwrite local data. Continue?
-            `,
-                yesText: 'Yes',
-                yesCallback: () => {
-                    forceResyncOnline(statusIndicator);
-                },
-                noText: 'Cancel',
-            });
-        };
+        },
 
-        panel.querySelector('#btn-export').onclick = exportToJson;
-        panel.querySelector('#btn-import').onclick = importFromJson;
-        panel.querySelector('#cfg-close').onclick = () => overlay.remove();
-        overlay.onclick = e => {
-            if (e.target === overlay) overlay.remove();
-        };
-
-        panel.querySelector('#cfg-save').onclick = () => {
-            const seconds = parseInt(panel.querySelector('#cfg-autosync').value, 10);
-            const autoEnabled = panel.querySelector('#cfg-autosync-toggle').checked;
-            const onlineEnabled = panel.querySelector('#cfg-online-toggle').checked;
-            const pantryId = panel.querySelector('#cfg-pantry-id').value.trim();
-
-            if (isNaN(seconds) || seconds < 10) return showNotification('Interval must be ≥10s', 'error');
-            GM_setValue('auto_sync_interval', seconds);
-            GM_setValue('online_sync_enabled', onlineEnabled);
-            if (pantryId) setPantryId(pantryId);
-            else GM_deleteValue('pantry_id');
-            initPantryClient();
-
-            if (autoEnabled) startAutoSync(seconds, statusIndicator);
-            else stopAutoSync();
-
-            showNotification(`Saved! Auto: ${autoEnabled ? seconds + 's' : 'Off'} | Online: ${onlineEnabled && pantryId ? 'On' : 'Off'}`, 'success');
-            overlay.remove();
-        };
-    }
-
-    async function handleSyncAction(action, indicator) {
-        if (action === 'open_config') return createConfigOverlay(indicator);
-        if (action === 'sync_now') {
-            await syncNowLocal(indicator);
-            if (isOnlineSyncEnabled() && pantryClient) {
-                await syncNowOnline(indicator);
+        checkAndInjectLayerStats() {
+            const layerPanel = DOMCache.get('.layer-panel');
+            if (layerPanel && !layerPanel.hasAttribute('data-kuri-stats-injected')) {
+                layerPanel.setAttribute('data-kuri-stats-injected', 'true');
+                if (LayerStatsManager.initLayerStatsDisplay()) {
+                    LayerStatsManager.watchLocalStorageChanges();
+                }
             }
         }
+    };
+
+    /* ================================================
+       THEME WATCHER
+       ================================================ */
+    function watchThemeChanges() {
+        const themeObserver = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                    const newTheme = Utils.getCurrentTheme();
+                    const container = DOMCache.get('.kuri-cp-container');
+                    if (container) {
+                        container.setAttribute('data-current-theme', newTheme);
+                    }
+                }
+            });
+        });
+
+        themeObserver.observe(document.body, {
+            attributes: true,
+            attributeFilter: ['data-theme']
+        });
     }
 
+    /* ================================================
+       INITIALIZATION
+       ================================================ */
+    function init() {
+        // Initialize managers
+        SyncManager.initPantryClient();
+        GMStorage.initLayerMultipliers();
+
+        // Initial injection
+        InjectionManager.injectDropdown();
+        watchThemeChanges();
+        UIManager.removeGoogleSignInText();
+        UIManager.removeTotalUsageText();
+
+        // Setup MutationObserver
+        const observer = new MutationObserver(() => {
+            if (!observer.throttled) {
+                observer.throttled = true;
+                requestAnimationFrame(() => {
+                    InjectionManager.checkAndReinject();
+                    UIManager.removeGoogleSignInText();
+                    UIManager.removeTotalUsageText();
+                    InjectionManager.checkAndInjectLayerStats();
+                    observer.throttled = false;
+                });
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        // Backup polling (keeping as requested)
+        setInterval(() => {
+            DOMCache.refresh();
+            InjectionManager.checkAndReinject();
+            UIManager.removeGoogleSignInText();
+            UIManager.removeTotalUsageText();
+            InjectionManager.checkAndInjectLayerStats();
+        }, CONFIG.MUTATION_CHECK_INTERVAL);
+    }
+
+    // Start when DOM is ready
+    if (document.readyState === 'loading') {
+        eventManager.add(document, 'DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    // Cleanup on unload
+    eventManager.add(window, 'beforeunload', () => {
+        eventManager.removeAll();
+        SyncManager.stopAutoSync();
+    });
+
+    // CSS styles (keeping original styles)
     const style = document.createElement('style');
     style.textContent = `
     /* ===================================
@@ -1619,459 +2129,7 @@ class Pantry {
         font-weight: 600;
         color: var(--primary-color, #00d4ff);
     }
-  `;
+    `;
     document.head.appendChild(style);
 
-    // Cache for board data from data.json
-    let boardDataCache = null;
-
-    // Fetch board data manually
-    async function fetchBoardData() {
-        if (boardDataCache) {
-            console.log('✅ Board data already cached');
-            return boardDataCache;
-        }
-
-        try {
-            const response = await fetch('/board/data.json');
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            boardDataCache = await response.json();
-            return boardDataCache;
-        } catch (err) {
-            console.error('Failed to fetch board data:', err);
-            return null;
-        }
-    }
-
-    //Calculate the board status
-    const DEFAULT_LAYER_MULTIPLIERS = {
-        layer1: {
-            attack: 3,
-            crit: 3,
-            defense: 3,
-            critResist: 3,
-            hp: 3
-        },
-        layer2: {
-            attack: 4,
-            crit: 4,
-            defense: 4,
-            critResist: 4,
-            hp: 4
-        },
-        layer3: {
-            attack: 5,
-            crit: 5,
-            defense: 5,
-            critResist: 5,
-            hp: 5
-        }
-    };
-
-    function getTotalCellsFromBoardData(layerNumber) {
-        if (!boardDataCache || !boardDataCache.characterBoards) {
-            return {
-                attack: '?',
-                crit: '?',
-                hp: '?',
-                defense: '?',
-                critResist: '?'
-            };
-        }
-
-        const layerKey = `layer${layerNumber}`;
-        const totals = {
-            attack: 0,
-            crit: 0,
-            hp: 0,
-            defense: 0,
-            critResist: 0
-        };
-
-        // Count cells for each character
-        Object.values(boardDataCache.characterBoards).forEach(character => {
-            const layer = character[layerKey];
-            if (layer && Array.isArray(layer)) {
-                layer.forEach(cellType => {
-                    if (totals.hasOwnProperty(cellType)) {
-                        totals[cellType]++;
-                    }
-                });
-            }
-        });
-
-        return totals;
-    }
-
-    // Initialize multipliers if not set
-    function initLayerMultipliers() {
-        const saved = GM_getValue('layer_multipliers', null);
-        if (!saved) {
-            GM_setValue('layer_multipliers', JSON.stringify(DEFAULT_LAYER_MULTIPLIERS));
-        }
-    }
-
-    // Get layer multipliers
-    function getLayerMultipliers() {
-        const saved = GM_getValue('layer_multipliers', null);
-        return saved ? JSON.parse(saved) : DEFAULT_LAYER_MULTIPLIERS;
-    }
-
-    // Set layer multipliers
-    function setLayerMultipliers(multipliers) {
-        GM_setValue('layer_multipliers', JSON.stringify(multipliers));
-    }
-
-    // Calculate layer stats from localStorage
-    function calculateLayerStats(layerNumber) {
-        const boardProgressRaw = localStorage.getItem('trickcal_board_progress');
-        if (!boardProgressRaw) {
-            return {
-                attack: { count: 0, total: '?' },
-                crit: { count: 0, total: '?' },
-                hp: { count: 0, total: '?' },
-                defense: { count: 0, total: '?' },
-                critResist: { count: 0, total: '?' }
-            };
-        }
-
-        let boardProgress;
-        try {
-            boardProgress = JSON.parse(boardProgressRaw);
-        } catch (e) {
-            console.error('Failed to parse trickcal_board_progress:', e);
-            return {
-                attack: { count: 0, total: '?' },
-                crit: { count: 0, total: '?' },
-                hp: { count: 0, total: '?' },
-                defense: { count: 0, total: '?' },
-                critResist: { count: 0, total: '?' }
-            };
-        }
-
-        const activatedCells = boardProgress.activatedCells || {};
-        const multipliers = getLayerMultipliers();
-        const layerKey = `layer${layerNumber}`;
-        const layerMultiplier = multipliers[layerKey] || DEFAULT_LAYER_MULTIPLIERS[layerKey];
-
-        // Count activated cells by status type
-        const stats = {
-            attack: 0,
-            crit: 0,
-            hp: 0,
-            defense: 0,
-            critResist: 0
-        };
-
-        Object.keys(activatedCells).forEach(key => {
-            if (activatedCells[key] === true) {
-                // Parse key format: {character}_layer{N}_{statusType}
-                const parts = key.split('_');
-                if (parts.length >= 3) {
-                    const keyLayer = parts[parts.length - 2]; // e.g., "layer1"
-                    const statusType = parts[parts.length - 1]; // e.g., "attack", "crit", etc.
-
-                    if (keyLayer === layerKey) {
-                        if (stats.hasOwnProperty(statusType)) {
-                            stats[statusType]++;
-                        }
-                    }
-                }
-            }
-        });
-
-        // Get total available cells from board data
-        const totals = getTotalCellsFromBoardData(layerNumber);
-
-        // Calculate final percentages and include counts
-        return {
-            attack: {
-                percentage: Math.floor(stats.attack * layerMultiplier.attack),
-                count: stats.attack,
-                total: totals.attack
-            },
-            crit: {
-                percentage: Math.floor(stats.crit * layerMultiplier.crit),
-                count: stats.crit,
-                total: totals.crit
-            },
-            hp: {
-                percentage: Math.floor(stats.hp * layerMultiplier.hp),
-                count: stats.hp,
-                total: totals.hp
-            },
-            defense: {
-                percentage: Math.floor(stats.defense * layerMultiplier.defense),
-                count: stats.defense,
-                total: totals.defense
-            },
-            critResist: {
-                percentage: Math.floor(stats.critResist * layerMultiplier.critResist),
-                count: stats.critResist,
-                total: totals.critResist
-            }
-        };
-    }
-
-    // Create stats display HTML
-    function createLayerStatsDisplay(stats) {
-        return `
-        <div class="panel-card kuri-layer-stats">
-            <div class="layer-summary">
-                <h3 class="kuri-summary-title">Layer Bonus Stats</h3>
-                <div class="kuri-stat-item">
-                    <span class="kuri-stat-label">Attack</span>
-                    <span class="kuri-stat-value">+${stats.attack.percentage}% [${stats.attack.count}/${stats.attack.total}]</span>
-                </div>
-                <div class="kuri-stat-item">
-                    <span class="kuri-stat-label">Critical</span>
-                    <span class="kuri-stat-value">+${stats.crit.percentage}% [${stats.crit.count}/${stats.crit.total}]</span>
-                </div>
-                <div class="kuri-stat-item">
-                    <span class="kuri-stat-label">HP</span>
-                    <span class="kuri-stat-value">+${stats.hp.percentage}% [${stats.hp.count}/${stats.hp.total}]</span>
-                </div>
-                <div class="kuri-stat-item">
-                    <span class="kuri-stat-label">Crit Resist</span>
-                    <span class="kuri-stat-value">+${stats.critResist.percentage}% [${stats.critResist.count}/${stats.critResist.total}]</span>
-                </div>
-                <div class="kuri-stat-item">
-                    <span class="kuri-stat-label">Defense</span>
-                    <span class="kuri-stat-value">+${stats.defense.percentage}% [${stats.defense.count}/${stats.defense.total}]</span>
-                </div>
-            </div>
-        </div>
-    `;
-    }
-
-    // Update or create layer stats display
-    function updateLayerStatsDisplay(layerNumber) {
-        const stats = calculateLayerStats(layerNumber);
-        const existingStats = document.querySelector('.kuri-layer-stats');
-        const statsHTML = createLayerStatsDisplay(stats);
-
-        if (existingStats) {
-            existingStats.outerHTML = statsHTML;
-        } else {
-            // Find the first panel-card and insert after it
-            const firstPanelCard = document.querySelector('.layer-panel .panel-card');
-            if (firstPanelCard) {
-                firstPanelCard.insertAdjacentHTML('afterend', statsHTML);
-            }
-        }
-    }
-
-    // Get current active layer number
-    function getCurrentActiveLayer() {
-        const activeTab = document.querySelector('.layer-panel .tab-btn.active');
-        if (activeTab) {
-            const text = activeTab.textContent.trim();
-            const match = text.match(/Layer (\d+)/i);
-            if (match) {
-                return parseInt(match[1], 10);
-            }
-        }
-        return 1; // Default to layer 1
-    }
-
-    // Initialize layer stats display
-    function initLayerStatsDisplay() {
-        const layerPanel = document.querySelector('.layer-panel');
-        if (!layerPanel) return false;
-
-        // Initialize multipliers
-        initLayerMultipliers();
-
-        // Fetch board data first
-        fetchBoardData().then(() => {
-            // Display stats for current active layer
-            const currentLayer = getCurrentActiveLayer();
-            updateLayerStatsDisplay(currentLayer);
-
-            // Add click handlers to layer tabs
-            const tabButtons = layerPanel.querySelectorAll('.tab-btn');
-            tabButtons.forEach((btn, index) => {
-                btn.addEventListener('click', () => {
-                    // Wait a bit for the tab to become active
-                    setTimeout(() => {
-                        const layerNum = index + 1;
-                        updateLayerStatsDisplay(layerNum);
-                    }, 100);
-                });
-            });
-        });
-
-        return true;
-    }
-
-    // Watch for character card clicks and recalculate stats
-    function watchLocalStorageChanges() {
-        // Store original setItem
-        const originalSetItem = localStorage.setItem;
-
-        // Override setItem
-        localStorage.setItem = function(key, value) {
-            // Call original
-            originalSetItem.apply(this, arguments);
-
-            // If trickcal_board_progress changed, recalculate
-            if (key === 'trickcal_board_progress') {
-                //console.log('📦 localStorage updated, recalculating stats...');
-                setTimeout(() => {
-                    const currentLayer = getCurrentActiveLayer();
-                    updateLayerStatsDisplay(currentLayer);
-                    //console.log('🔄 Stats recalculated');
-                }, 100);
-            }
-        };
-    }
-
-    // Check and inject layer stats display
-    function checkAndInjectLayerStats() {
-        const layerPanel = document.querySelector('.layer-panel');
-        if (layerPanel && !layerPanel.hasAttribute('data-kuri-stats-injected')) {
-            layerPanel.setAttribute('data-kuri-stats-injected', 'true');
-            if (initLayerStatsDisplay()) {
-                //console.log('✅ Layer stats display injected!');
-                watchLocalStorageChanges();
-            }
-        }
-    }
-
-    function removeGoogleSignInText() {
-        try {
-            const googleBtn = document.querySelector('.google-signin-btn span');
-            if (googleBtn && googleBtn.textContent.includes('Sign in with Google')) {
-                googleBtn.remove();
-                return true;
-            }
-        } catch (e) {
-            /* ignore */
-        }
-        return false;
-    }
-
-    function removeTotalUsageText() {
-        try {
-            const usageCounterDiv = document.querySelector('div.usage-counter');
-            if (usageCounterDiv) {
-                usageCounterDiv.remove();
-                return true;
-            }
-        } catch (e) {
-            /* ignore */
-        }
-        return false;
-    }
-
-    function injectDropdown() {
-        const navActions = document.querySelector('.nav-actions');
-        if (navActions && !document.querySelector('[data-injected="true"]')) {
-            const dropdown = createSyncDropdown();
-            dropdown.setAttribute('data-injected', 'true');
-            navActions.prepend(dropdown);
-            currentDropdown = dropdown;
-            console.log('✅ Kuri CP Sync Manager injected!');
-            const enabled = GM_getValue('auto_sync_enabled', false);
-            const interval = GM_getValue('auto_sync_interval', 300);
-            if (enabled && interval) startAutoSync(interval, dropdown.querySelector('.kuri-status-indicator'));
-            return true;
-        }
-        return false;
-    }
-
-    function checkAndReinject() {
-        const navActions = document.querySelector('.nav-actions');
-        const existing = document.querySelector('[data-injected="true"]');
-        if (existing && document.contains(existing)) {
-            currentDropdown = existing;
-            return;
-        }
-        if (navActions && !existing) {
-            injectDropdown();
-        }
-    }
-
-    function checkAndModifyGoogleButton() {
-        try {
-            const googleBtn = document.querySelector('.google-signin-btn span');
-            if (googleBtn && googleBtn !== lastCheckedGoogleBtn) {
-                if (googleBtn.textContent.includes('Sign in with Google')) {
-                    removeGoogleSignInText();
-                    lastCheckedGoogleBtn = googleBtn;
-                }
-            }
-            if (lastCheckedGoogleBtn && !document.contains(lastCheckedGoogleBtn)) lastCheckedGoogleBtn = null;
-        } catch (e) {
-            /* ignore */
-        }
-    }
-
-    function checkAndModifyTotalUsageText() {
-        try {
-            const usageText = document.querySelector('div.usage-counter');
-            if (usageText && usageText !== lastCheckedUsageDiv) {
-                removeTotalUsageText();
-                lastCheckedUsageDiv = usageText;
-            }
-            if (lastCheckedUsageDiv && !document.contains(lastCheckedUsageDiv)) lastCheckedUsageDiv = null;
-        } catch (e) {
-            /* ignore */
-        }
-    }
-
-    function watchThemeChanges() {
-        const themeObserver = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
-                    const newTheme = getCurrentTheme();
-                    const container = document.querySelector('.kuri-cp-container');
-                    if (container) {
-                        container.setAttribute('data-current-theme', newTheme);
-                    }
-                }
-            });
-        });
-        themeObserver.observe(document.body, {
-            attributes: true,
-            attributeFilter: ['data-theme']
-        });
-    }
-
-    function init() {
-        injectDropdown();
-        initLayerMultipliers();
-        watchThemeChanges();
-        removeGoogleSignInText();
-        removeTotalUsageText();
-
-        const observer = new MutationObserver(() => {
-            if (!observer.throttled) {
-                observer.throttled = true;
-                requestAnimationFrame(() => {
-                    checkAndReinject();
-                    checkAndModifyGoogleButton();
-                    checkAndModifyTotalUsageText();
-                    checkAndInjectLayerStats();
-                    observer.throttled = false;
-                });
-            }
-        });
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-
-        setInterval(() => {
-            checkAndReinject();
-            checkAndModifyGoogleButton();
-            checkAndModifyTotalUsageText();
-            checkAndInjectLayerStats();
-        }, 2000);
-    }
-
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-    else init();
 })();
