@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kuri CP : Nossite Trickcal Enhancer
 // @namespace    https://www.kurisutaru.net/
-// @version      1.13
+// @version      1.14
 // @description  Enhances Trickcal with a custom control panel: local & Pantry.cloud sync (with auto-sync), JSON backup/restore, real-time layer bonus stats, and UI cleanup.
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
@@ -190,6 +190,17 @@
     /* ================================================
        GM STORAGE WRAPPER
        ================================================ */
+
+    const GMStorage_KEY = Object.freeze({
+        PANTRY_ID: "pantry_id",
+        ONLINE_SYNC_ENABLE: "online_sync_enabled",
+        AUTO_SYNC_ENABLED: "auto_sync_enabled",
+        AUTO_SYNC_INTERVAL: "auto_sync_interval",
+        LAST_SYNC_DATE: "last_sync_date",
+        LAYER_MULTIPLIERS: "layer_multipliers",
+        TRICKCAL_SYNC_DATA: "trickcal_sync_data",
+    });
+    
     const GMStorage = {
         get(key, defaultValue = null) {
             return GM_getValue(key, defaultValue);
@@ -204,32 +215,32 @@
         },
 
         getPantryId() {
-            return this.get('pantry_id', '').trim();
+            return this.get(GMStorage_KEY.PANTRY_ID, '').trim();
         },
 
         setPantryId(id) {
-            this.set('pantry_id', id.trim());
+            this.set(GMStorage_KEY.PANTRY_ID, id.trim());
         },
 
         isOnlineSyncEnabled() {
-            return this.get('online_sync_enabled', false);
+            return this.get(GMStorage_KEY.ONLINE_SYNC_ENABLE, false);
         },
 
         isAutoSyncEnabled() {
-            return this.get('auto_sync_enabled', false);
+            return this.get(GMStorage_KEY.AUTO_SYNC_ENABLED, false);
         },
 
         getAutoSyncInterval() {
-            return this.get('auto_sync_interval', CONFIG.AUTO_SYNC_DEFAULT_INTERVAL);
+            return this.get(GMStorage_KEY.AUTO_SYNC_INTERVAL, CONFIG.AUTO_SYNC_DEFAULT_INTERVAL);
         },
 
         getLastSyncDate() {
-            const dateStr = this.get('last_sync_date', new Date().toISOString());
+            const dateStr = this.get(GMStorage_KEY.LAST_SYNC_DATE, new Date().toISOString());
             return new Date(dateStr);
         },
 
         setLastSyncDate(date = new Date()) {
-            this.set('last_sync_date', date.toISOString());
+            this.set(GMStorage_KEY.LAST_SYNC_DATE, date.toISOString());
             const dateElement = DOMCache.get('#kuri-last-sync-date');
             if (dateElement) {
                 dateElement.innerHTML = Utils.formatDateTime(date);
@@ -237,16 +248,16 @@
         },
 
         getLayerMultipliers() {
-            const saved = this.get('layer_multipliers', null);
+            const saved = this.get(GMStorage_KEY.LAYER_MULTIPLIERS, null);
             return saved ? JSON.parse(saved) : CONFIG.DEFAULT_LAYER_MULTIPLIERS;
         },
 
         setLayerMultipliers(multipliers) {
-            this.set('layer_multipliers', JSON.stringify(multipliers));
+            this.set(GMStorage_KEY.LAYER_MULTIPLIERS, JSON.stringify(multipliers));
         },
 
         initLayerMultipliers() {
-            if (!this.get('layer_multipliers', null)) {
+            if (!this.get(GMStorage_KEY.LAYER_MULTIPLIERS, null)) {
                 this.setLayerMultipliers(CONFIG.DEFAULT_LAYER_MULTIPLIERS);
             }
         }
@@ -489,7 +500,7 @@
                 const data = StorageManager.getLocalData();
                 const now = new Date();
 
-                GMStorage.set('trickcal_sync_data', JSON.stringify({
+                GMStorage.set(GMStorage_KEY.TRICKCAL_SYNC_DATA, JSON.stringify({
                     data,
                     timestamp: now.toISOString()
                 }));
@@ -532,7 +543,7 @@
             try {
                 if (statusIndicator) statusIndicator.set('syncing');
 
-                const raw = GMStorage.get('trickcal_sync_data', null);
+                const raw = GMStorage.get(GMStorage_KEY.TRICKCAL_SYNC_DATA, null);
                 if (!raw) {
                     if (statusIndicator) statusIndicator.set('idle');
                     return UIManager.showNotification('No local synced data', 'warning');
@@ -588,8 +599,6 @@
                         }
                     });
                 }, seconds * 1000);
-                GMStorage.set('auto_sync_interval', seconds);
-                GMStorage.set('auto_sync_enabled', true);
                 UIManager.showNotification(`⏱️ Auto-sync started (${seconds}s)`, 'info');
             } catch (e) {
                 console.error('startAutoSync error', e);
@@ -599,9 +608,8 @@
         stopAutoSync() {
             if (AppState.autoSyncInterval) {
                 clearInterval(AppState.autoSyncInterval);
+                AppState.autoSyncInterval = null;
             }
-            AppState.autoSyncInterval = null;
-            GMStorage.delete('auto_sync_enabled');
         }
     };
 
@@ -610,7 +618,7 @@
        ================================================ */
     const BackupManager = {
         exportToJson() {
-            const raw = GMStorage.get('trickcal_sync_data', null);
+            const raw = GMStorage.get(GMStorage_KEY.TRICKCAL_SYNC_DATA, null);
             if (!raw) {
                 return UIManager.showNotification('⚠️ Nothing to export', 'warning');
             }
@@ -639,7 +647,7 @@
                     const text = await f.text();
                     const parsed = JSON.parse(text);
 
-                    GMStorage.set('trickcal_sync_data', JSON.stringify({
+                    GMStorage.set(GMStorage_KEY.TRICKCAL_SYNC_DATA, JSON.stringify({
                         data: parsed.data || parsed,
                         timestamp: new Date().toISOString()
                     }));
@@ -1117,16 +1125,20 @@
                     return UIManager.showNotification(`Interval must be ≥${CONFIG.MIN_AUTO_SYNC_INTERVAL}s`, 'error');
                 }
 
-                GMStorage.set('auto_sync_interval', seconds);
-                GMStorage.set('online_sync_enabled', onlineEnabled);
+                GMStorage.set(GMStorage_KEY.AUTO_SYNC_INTERVAL, seconds);
+                GMStorage.set(GMStorage_KEY.AUTO_SYNC_ENABLED, autoEnabled);
+                GMStorage.set(GMStorage_KEY.ONLINE_SYNC_ENABLE, onlineEnabled);
 
                 if (pantryId) GMStorage.setPantryId(pantryId);
-                else GMStorage.delete('pantry_id');
+                else GMStorage.delete(GMStorage_KEY.PANTRY_ID);
 
                 SyncManager.initPantryClient();
 
-                if (autoEnabled) SyncManager.startAutoSync(seconds, statusIndicator);
-                else SyncManager.stopAutoSync();
+                if (autoEnabled) {
+                    SyncManager.startAutoSync(seconds, statusIndicator);
+                } else {
+                    SyncManager.stopAutoSync();
+                }
 
                 UIManager.showNotification(`Saved! Auto: ${autoEnabled ? seconds + 's' : 'Off'} | Online: ${onlineEnabled && pantryId ? 'On' : 'Off'}`, 'success');
                 overlay.remove();
@@ -1168,6 +1180,8 @@
                 AppState.currentDropdown = container;
 
                 console.log('✅ Kuri CP Sync Manager injected!');
+
+                console.log(GMStorage.isAutoSyncEnabled());
 
                 if (GMStorage.isAutoSyncEnabled()) {
                     const interval = GMStorage.getAutoSyncInterval();
