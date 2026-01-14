@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Kuri CP : Nossite Trickcal Enhancer
 // @namespace    https://www.kurisutaru.net/
-// @version      1.14
+// @version      1.15
 // @description  Enhances Trickcal with a custom control panel: local & Pantry.cloud sync (with auto-sync), JSON backup/restore, real-time layer bonus stats, and UI cleanup.
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
 // @downloadURL  https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/trickcal.nossite.com/trickcal-kuri-cp-sync-manager.user.js
 // @updateURL    https://raw.githubusercontent.com/Kurisutaru/userscript-collections/main/trickcal.nossite.com/trickcal-kuri-cp-sync-manager.user.js
+// @supportURL   https://github.com/Kurisutaru/userscript-collections/issues
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
@@ -1180,8 +1181,6 @@
                 AppState.currentDropdown = container;
 
                 console.log('✅ Kuri CP Sync Manager injected!');
-
-                console.log(GMStorage.isAutoSyncEnabled());
 
                 if (GMStorage.isAutoSyncEnabled()) {
                     const interval = GMStorage.getAutoSyncInterval();
