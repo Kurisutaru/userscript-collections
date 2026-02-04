@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kuri CP : Nossite Trickcal Enhancer
 // @namespace    https://www.kurisutaru.net/
-// @version      1.15
+// @version      1.16
 // @description  Enhances Trickcal with a custom control panel: local & Pantry.cloud sync (with auto-sync), JSON backup/restore, real-time layer bonus stats, and UI cleanup.
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
@@ -200,6 +200,7 @@
         LAST_SYNC_DATE: "last_sync_date",
         LAYER_MULTIPLIERS: "layer_multipliers",
         TRICKCAL_SYNC_DATA: "trickcal_sync_data",
+        SHOW_STATS_PANEL: "show_stats_panel",
     });
     
     const GMStorage = {
@@ -227,12 +228,24 @@
             return this.get(GMStorage_KEY.ONLINE_SYNC_ENABLE, false);
         },
 
+        setOnlineSyncEnabled(bool) {
+            this.set(GMStorage_KEY.ONLINE_SYNC_ENABLE, bool);
+        },
+
         isAutoSyncEnabled() {
             return this.get(GMStorage_KEY.AUTO_SYNC_ENABLED, false);
         },
 
+        setAutoSyncEnabled(bool) {
+            this.set(GMStorage_KEY.AUTO_SYNC_ENABLED, bool);
+        },
+
         getAutoSyncInterval() {
             return this.get(GMStorage_KEY.AUTO_SYNC_INTERVAL, CONFIG.AUTO_SYNC_DEFAULT_INTERVAL);
+        },
+
+        setAutoSyncInterval(interval) {
+            this.set(GMStorage_KEY.AUTO_SYNC_INTERVAL, interval);
         },
 
         getLastSyncDate() {
@@ -261,7 +274,15 @@
             if (!this.get(GMStorage_KEY.LAYER_MULTIPLIERS, null)) {
                 this.setLayerMultipliers(CONFIG.DEFAULT_LAYER_MULTIPLIERS);
             }
-        }
+        },
+
+        getShowStatsPanel() {
+            return this.get(GMStorage_KEY.SHOW_STATS_PANEL, false);
+        },
+
+        setShowStatsPanel(bool) {
+            this.set(GMStorage_KEY.SHOW_STATS_PANEL, bool);
+        },
     };
 
     /* ================================================
@@ -292,6 +313,10 @@
                 clearTimeout(timeout);
                 timeout = setTimeout(() => func.apply(this, args), wait);
             };
+        },
+
+        checkUrlByParamUrlPath(paramUrl) {
+            return window.location.pathname.startsWith(paramUrl);
         }
     };
 
@@ -998,6 +1023,7 @@
             const lastSyncDate = GMStorage.getLastSyncDate();
             const onlineEnabled = GMStorage.isOnlineSyncEnabled();
             const pantryId = GMStorage.getPantryId();
+            const showPanelStats = GMStorage.getShowStatsPanel();
 
             panel.innerHTML = `
                 <div class="kuri-config-header">
@@ -1040,6 +1066,12 @@
                 <div class="kuri-config-btn-group">
                     <button id="btn-export" class="kuri-btn-base kuri-btn-success kuri-flex-1">📤 Export JSON</button>
                     <button id="btn-import" class="kuri-btn-base kuri-btn-warning kuri-flex-1">📥 Import JSON</button>
+                </div>
+                <hr class="kuri-config-divider">
+                <h3 class="kuri-config-section-title">🎲 Other Config</h3>
+                <div class="kuri-config-row">
+                    <span>Show Panel Stats</span>
+                    <label class="kuri-switch"><input type="checkbox" id="cfg-show-panel-stats-toggle" ${showPanelStats ? 'checked' : ''}><span class="kuri-slider"></span></label>
                 </div>
                 <div class="kuri-config-footer">
                     <button id="cfg-save" class="kuri-btn-base kuri-popup-yes-btn">Save</button>
@@ -1121,14 +1153,16 @@
                 const autoEnabled = panel.querySelector('#cfg-autosync-toggle').checked;
                 const onlineEnabled = panel.querySelector('#cfg-online-toggle').checked;
                 const pantryId = panel.querySelector('#cfg-pantry-id').value.trim();
+                const showPanelStats = panel.querySelector('#cfg-show-panel-stats-toggle').checked;
 
                 if (isNaN(seconds) || seconds < CONFIG.MIN_AUTO_SYNC_INTERVAL) {
                     return UIManager.showNotification(`Interval must be ≥${CONFIG.MIN_AUTO_SYNC_INTERVAL}s`, 'error');
                 }
 
-                GMStorage.set(GMStorage_KEY.AUTO_SYNC_INTERVAL, seconds);
-                GMStorage.set(GMStorage_KEY.AUTO_SYNC_ENABLED, autoEnabled);
-                GMStorage.set(GMStorage_KEY.ONLINE_SYNC_ENABLE, onlineEnabled);
+                GMStorage.setAutoSyncInterval(seconds);
+                GMStorage.setAutoSyncEnabled(autoEnabled);
+                GMStorage.setOnlineSyncEnabled(onlineEnabled);
+                GMStorage.setShowStatsPanel(showPanelStats)
 
                 if (pantryId) GMStorage.setPantryId(pantryId);
                 else GMStorage.delete(GMStorage_KEY.PANTRY_ID);
@@ -1170,6 +1204,8 @@
        INJECTION MANAGER
        ================================================ */
     const InjectionManager = {
+
+        // Run all
         injectDropdown() {
             const navActions = DOMCache.get('.nav-actions', true);
             const existing = DOMCache.get('[data-injected="true"]');
@@ -1205,7 +1241,18 @@
             }
         },
 
+        // Only run at https://trickcal.nossite.com/board
         checkAndInjectLayerStats() {
+            if (!Utils.checkUrlByParamUrlPath('/board')) {
+                return;
+            }
+
+            if (!GMStorage.getShowStatsPanel()) {
+                let statusPanel = DOMCache.get('.kuri-layer-stats');
+                if (statusPanel) { statusPanel.remove(); }
+                return;
+            }
+
             const layerPanel = DOMCache.get('.layer-panel');
             if (layerPanel && !layerPanel.hasAttribute('data-kuri-stats-injected')) {
                 layerPanel.setAttribute('data-kuri-stats-injected', 'true');
