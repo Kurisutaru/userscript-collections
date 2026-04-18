@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kuri CP : Nossite Trickcal Enhancer
 // @namespace    https://www.kurisutaru.net/
-// @version      1.16
+// @version      1.17
 // @description  Enhances Trickcal with a custom control panel: local & Pantry.cloud sync (with auto-sync), JSON backup/restore, real-time layer bonus stats, and UI cleanup.
 // @author       Kurisutaru
 // @match        https://trickcal.nossite.com/*
@@ -1176,8 +1176,10 @@
                 }
 
                 UIManager.showNotification(`Saved! Auto: ${autoEnabled ? seconds + 's' : 'Off'} | Online: ${onlineEnabled && pantryId ? 'On' : 'Off'}`, 'success');
-                overlay.remove();
-                DOMCache.clear('.kuri-config-overlay');
+                setTimeout(function(){
+                    location.reload();
+                }, 1000);
+
             });
         },
 
